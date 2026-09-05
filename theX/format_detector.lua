@@ -69,15 +69,66 @@ local function rtrim_zero_space(bytes)
   return ffi.string(buf.ptr, last)
 end
 
+local function trim_zero_space(bytes)
+  local buf = make_buffer(bytes)
+  local last = buf.len
+  local first = 0
+  while first <= last do
+    local b = tonumber(buf.ptr[first])
+    if b == 0x00 or b == 0x20 then
+      first = first + 1
+    else
+      break
+    end
+  end
+  if first == last then
+    return ""
+  end
+  while last > 0 do
+    local b = tonumber(buf.ptr[last - 1])
+    if b == 0x00 or b == 0x20 then
+      last = last - 1
+    else
+      break
+    end
+  end
+  if last <= 0 then
+    return ""
+  end
+  return ffi.string(buf.ptr + first, last)
+end
+
+local function decode_ascii(bytes)
+  local out = {}
+  local buf = make_buffer(bytes)
+  for i = 0, buf.len - 1 do
+    local b = tonumber(buf.ptr[i])
+    if b >= 32 and b <= 126 then
+      out[#out + 1] = string.char(b)
+    else
+      out[#out + 1] = "_"
+    end
+  end
+  return table.concat(out)
+end
+local function get_pattern_len(pattern)
+  if type(pattern) ~= "table" then
+    return 0
+  end
+  local max_index = 0
+  for k in pairs(pattern) do
+    if type(k) == "number" and k >= 1 and k % 1 == 0 and k > max_index then
+      max_index = k
+    end
+  end
+  return max_index
+end
 local function normalize_rule(rule)
   if type(rule) ~= "table" then
     return nil
   end
 
   local out = {}
-  if type(rule.group) == "string" and rule.group ~= "" then
-    out.group = rule.group
-  end
   if type(rule.type) == "string" and rule.type ~= "" then
     out.type = rule.type
   end
@@ -99,35 +150,100 @@ local function normalize_rule(rule)
   if type(rule.description) == "string" and rule.description ~= "" then
     out.description = rule.description
   end
+  if type(rule.description_vars) == "table" then
+    local description_vars = {}
+    for name, spec in pairs(rule.description_vars) do
+      if type(name) == "string" and name ~= "" and type(spec) == "table" then
+        local offset = spec.offset
+        if offset == nil then
+          offset = spec[1]
+        end
+        local value_type = spec.type
+        if value_type == nil then
+          value_type = spec[2]
+        end
+        if tonumber(offset) and (value_type == "u8" or value_type == "ascii") then
+          local normalized_spec = {
+            offset = math.floor(tonumber(offset)),
+            type = value_type,
+          }
+          if value_type == "ascii" then
+            local length = spec.length
+            if length == nil then
+              length = spec[3]
+            end
+            if tonumber(length) and tonumber(length) > 0 then
+              normalized_spec.length = math.floor(tonumber(length))
+            end
+          end
+          description_vars[name] = normalized_spec
+        end
+      end
+    end
+    if next(description_vars) ~= nil then
+      out.description_vars = description_vars
+    end
+  end
   if type(rule.show_header) == "boolean" then
     out.show_header = rule.show_header
   end
-  if type(rule.comment) == "table" and tonumber(rule.comment.offset) and tonumber(rule.comment.length) then
-    out.comment = {
-      offset = math.floor(tonumber(rule.comment.offset)),
-      length = math.floor(tonumber(rule.comment.length)),
-    }
+  local raw_comment = rule.comment or rule.Comment
+  if type(raw_comment) == "table" then
+    local offset = raw_comment.offset
+    local length = raw_comment.length
+    if offset == nil or length == nil then
+      offset = raw_comment[1]
+      length = raw_comment[2]
+    end
+    if tonumber(offset) and tonumber(length) then
+      out.comment = {
+        offset = math.floor(tonumber(offset)),
+        length = math.floor(tonumber(length)),
+      }
+    end
   end
+
+  local raw_author = rule.author or rule.Author
+  if type(raw_author) == "table" then
+    local offset = raw_author.offset
+    local length = raw_author.length
+    if offset == nil or length == nil then
+      offset = raw_author[1]
+      length = raw_author[2]
+    end
+    if tonumber(offset) and tonumber(length) then
+      out.author = {
+        offset = math.floor(tonumber(offset)),
+        length = math.floor(tonumber(length)),
+      }
+    end
+  end
+
   if type(rule.signatures) == "table" then
     local signatures = {}
     for i = 1, #rule.signatures do
       local sig = rule.signatures[i]
       if type(sig) == "table" and tonumber(sig.offset) and type(sig.pattern) == "table" then
         local pattern = {}
-        for j = 1, #sig.pattern do
+        local pattern_len = 0
+        local source_len = get_pattern_len(sig.pattern)
+        for j = 1, source_len do
           local p = sig.pattern[j]
-          if p == "?" then
-            pattern[#pattern + 1] = "?"
+          if p == nil then
+            pattern_len = pattern_len + 1
           elseif type(p) == "number" and p >= 0 and p <= 255 then
-            pattern[#pattern + 1] = math.floor(p)
+            pattern_len = pattern_len + 1
+            pattern[pattern_len] = math.floor(p)
           elseif type(p) == "string" and p ~= "" then
-            pattern[#pattern + 1] = p
+            pattern_len = pattern_len + 1
+            pattern[pattern_len] = p
           end
         end
-        if #pattern > 0 then
+        if pattern_len > 0 then
           signatures[#signatures + 1] = {
             offset = math.floor(tonumber(sig.offset)),
             pattern = pattern,
+            pattern_len = pattern_len,
           }
         end
       end
@@ -158,12 +274,16 @@ local function normalize_registry(registry)
         if type(normalized.signatures) == "table" then
           for j = 1, #normalized.signatures do
             local pattern = normalized.signatures[j].pattern
-            if #pattern > max_signature_len then
+            local pattern_len = normalized.signatures[j].pattern_len or get_pattern_len(pattern)
+            if pattern_len > max_signature_len then
               local trimmed = {}
               for k = 1, max_signature_len do
-                trimmed[k] = pattern[k]
+                if pattern[k] ~= nil then
+                  trimmed[k] = pattern[k]
+                end
               end
               normalized.signatures[j].pattern = trimmed
+              normalized.signatures[j].pattern_len = max_signature_len
             end
           end
         end
@@ -190,14 +310,15 @@ end
 local function check_signature(scan_data, signature)
   local offset = signature.offset
   local pattern = signature.pattern
+  local pattern_len = signature.pattern_len or get_pattern_len(pattern)
   if offset < 0 then
     return false
   end
 
   local pattern_span = 0
-  for i = 1, #pattern do
+  for i = 1, pattern_len do
     local token = pattern[i]
-    if token == "?" then
+    if token == nil then
       pattern_span = pattern_span + 1
     elseif type(token) == "number" then
       pattern_span = pattern_span + 1
@@ -215,9 +336,9 @@ local function check_signature(scan_data, signature)
 
   local bytes = make_buffer(scan_data)
   local pos = offset
-  for i = 1, #pattern do
+  for i = 1, pattern_len do
     local expected = pattern[i]
-    if expected == "?" then
+    if expected == nil then
       pos = pos + 1
     elseif type(expected) == "number" then
       local actual = tonumber(bytes.ptr[pos])
@@ -286,8 +407,90 @@ local function extract_comment(scan_data, comment_rule)
   if trimmed == "" then
     return ""
   end
+
   return decode_cp866(trimmed)
 end
+
+local function extract_author(scan_data, author_rule)
+  if not author_rule then
+    return nil
+  end
+  if author_rule.offset < 0 or author_rule.length <= 0 then
+    return nil
+  end
+
+  local part = bytes_slice(scan_data, author_rule.offset, author_rule.length)
+  if not part then
+    return nil
+  end
+  local trimmed = trim_zero_space(part)
+  if trimmed == "" then
+    return ""
+  end
+
+  return decode_cp866(trimmed)
+end
+
+local function extract_description_value(scan_data, var_spec)
+  if type(var_spec) ~= "table" then
+    return nil
+  end
+  local offset = tonumber(var_spec.offset)
+  if offset == nil then
+    return nil
+  end
+  offset = math.floor(offset)
+  if offset < 0 then
+    return nil
+  end
+
+  if var_spec.type == "u8" then
+    local one = bytes_slice(scan_data, offset, 1)
+    if not one or #one ~= 1 then
+      return nil
+    end
+    return tostring(string.byte(one, 1))
+  end
+
+  if var_spec.type == "ascii" then
+    local length = tonumber(var_spec.length)
+    if length == nil or length <= 0 then
+      return nil
+    end
+    length = math.floor(length)
+    local part = bytes_slice(scan_data, offset, length)
+    if not part then
+      return nil
+    end
+    local trimmed = rtrim_zero_space(part)
+    if trimmed == "" then
+      return ""
+    end
+    return decode_ascii(trimmed)
+  end
+
+  return nil
+end
+
+local function build_rule_description(rule, scan_data)
+  local template = type(rule) == "table" and rule.description or nil
+  if type(template) ~= "string" or template == "" then
+    return nil
+  end
+  local description_vars = type(rule.description_vars) == "table" and rule.description_vars or nil
+  if description_vars == nil then
+    return template
+  end
+  return (template:gsub("{([%w_]+)}", function(var_name)
+    local spec = description_vars[var_name]
+    local value = extract_description_value(scan_data, spec)
+    if value == nil then
+      return "{" .. var_name .. "}"
+    end
+    return value
+  end))
+end
+
 
 function M.detect_entry(entry, registry)
   if type(entry) ~= "table" or type(registry) ~= "table" then
@@ -309,14 +512,20 @@ function M.detect_entry(entry, registry)
   for i = 1, #registry.formats do
     local rule = registry.formats[i]
     if rule_matches(entry, rule, scan_data) then
+      local detected_comment = extract_comment(scan_data, rule.comment)
+      local detected_author = extract_author(scan_data, rule.author)
+      local detected_description = build_rule_description(rule, scan_data)
+      if detected_comment and detected_author then
+        detected_comment = detected_comment .. " by " .. detected_author
+      end
+
       return {
         order = i,
-        group = rule.group,
-        description = rule.description,
+        description = detected_description or rule.description,
         new_type = rule.new_type,
         special_char = rule.special_char,
         show_header = rule.show_header,
-        comment = extract_comment(scan_data, rule.comment),
+        comment = detected_comment,
       }
     end
   end

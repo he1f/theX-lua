@@ -4,7 +4,20 @@ local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then
   return M
 end
+
+local function sum_bytes_u32(buffer, start_pos, end_pos)
+  if start_pos < 1 or end_pos > buffer.len or start_pos > end_pos then
+    return nil
+  end
+
+  local sum = 0
+  for i = start_pos, end_pos do
+    sum = (sum + tonumber(buffer.ptr[i - 1])) % 4294967296
+  end
+  return sum
+end
 local config = require("xscl.config")
+local hobeta_writer = require("theX.formats.hobeta_writer")
 local ok_thex, thex_module = pcall(require, "theX")
 local format_detector = ok_thex and thex_module and thex_module.format_detector or nil
 local display_name_formatter = ok_thex and thex_module and thex_module.display_name_formatter or nil
@@ -15,12 +28,6 @@ local SIGNATURE = "SINCLAIR"
 local HEADER_SIZE = 9
 local ENTRY_SIZE = 14
 local SECTOR_SIZE = 256
-local TYPE_DESCRIPTIONS = {
-  B = "BASIC",
-  C = "CODE",
-  D = "DATA",
-  ["#"] = "SEQ",
-}
 
 local function make_buffer(data)
   return {
@@ -44,6 +51,17 @@ local function le16(buffer, pos)
     return nil
   end
   return low + high * 256
+end
+
+local function le32(buffer, pos)
+  local b0 = u8(buffer, pos)
+  local b1 = u8(buffer, pos + 1)
+  local b2 = u8(buffer, pos + 2)
+  local b3 = u8(buffer, pos + 3)
+  if b0 == nil or b1 == nil or b2 == nil or b3 == nil then
+    return nil
+  end
+  return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
 end
 
 local function bytes_slice(buffer, pos, count)
@@ -137,13 +155,30 @@ local function decode_type(type_byte)
 end
 
 local function make_display_name(base_name, type_name, start_value)
+  local function normalize_display_name(value)
+    if type(value) ~= "string" or value == "" then
+      return value
+    end
+    local normalized = value
+    normalized = normalized:gsub("%.%.+<", ".<")
+    normalized = normalized:gsub("%.%.+([A-Za-z0-9])", ".%1")
+    return normalized
+  end
+  local alignment_extension = ""
   if display_name_formatter and type(display_name_formatter.make_display_name) == "function" then
-    return display_name_formatter.make_display_name(base_name, type_name, start_value)
+    local value = display_name_formatter.make_display_name(base_name, type_name, start_value)
+    if type(display_name_formatter.make_alignment_extension) == "function" then
+      alignment_extension = display_name_formatter.make_alignment_extension(type_name, start_value) or ""
+    end
+    return normalize_display_name(value), alignment_extension
   end
   if type(type_name) == "string" and type_name ~= "" then
-    return base_name .. "<" .. type_name .. ">"
+    if #type_name == 3 then
+      return normalize_display_name(base_name .. type_name), type_name
+    end
+    return normalize_display_name(base_name .. "<" .. type_name .. ">"), "<" .. type_name .. ">"
   end
-  return base_name
+  return normalize_display_name(base_name), alignment_extension
 end
 
 local function read_all_bytes(file_path)
@@ -195,6 +230,35 @@ function M.read(file_path)
     return nil, "xSCL: invalid SCL directory size"
   end
 
+  local total_data_size = 0
+  for index = 1, files_count do
+    local entry_start = entries_table_start + (index - 1) * ENTRY_SIZE
+    local sectors = u8(buffer, entry_start + 13)
+    if sectors == nil then
+      return nil, "xSCL: invalid TR-DOS header in entry #" .. tostring(index)
+    end
+    total_data_size = total_data_size + sectors * SECTOR_SIZE
+  end
+
+  local data_end = entries_table_end + total_data_size
+  local checksum_pos = data_end + 1
+  local checksum_end = checksum_pos + 3
+  if buffer.len < checksum_end then
+    return nil, "xSCL: missing SCL checksum"
+  end
+  if buffer.len > checksum_end then
+    return nil, "xSCL: invalid SCL size (trailing bytes)"
+  end
+
+  local stored_checksum = le32(buffer, checksum_pos)
+  local calc_checksum = sum_bytes_u32(buffer, 1, data_end)
+  if stored_checksum == nil or calc_checksum == nil then
+    return nil, "xSCL: invalid SCL checksum data"
+  end
+  if stored_checksum ~= calc_checksum then
+    return nil, "xSCL: invalid SCL checksum"
+  end
+
   local cursor = entries_table_end + 1
   local entries = {}
   local used_pc_names = {}
@@ -214,7 +278,7 @@ function M.read(file_path)
 
     local base_name, is_deleted = decode_name(name_bytes)
     local type_name = decode_type(type_byte)
-    local panel_name = make_display_name(base_name, type_name, param1)
+    local panel_name, panel_ext = make_display_name(base_name, type_name, param1)
 
     local allocated_size = sectors * SECTOR_SIZE
     local logical_size = param2
@@ -234,21 +298,31 @@ function M.read(file_path)
       cursor = cursor + allocated_size
     end
 
+    local logical_data = bytes_slice(make_buffer(allocated_data), 1, logical_size) or ""
+    local default_description = ""
     local entry = {
       name = panel_name,
       size = logical_size,
-      data = bytes_slice(make_buffer(allocated_data), 1, logical_size) or "",
+      data = logical_data,
+      raw_file = logical_data,
+      hobeta = nil,
       allocated_data = allocated_data,
       attributes = is_deleted and "h" or "",
       file_attributes = is_deleted and FILE_ATTRIBUTE_HIDDEN or 0,
       is_deleted = is_deleted,
       trdos_name = base_name,
+      display_extension = panel_ext,
+      trdos_name_raw = name_bytes,
       trdos_start = param1,
       trdos_sectors = sectors,
       trdos_type = type_name,
-      trdos_type_description = TYPE_DESCRIPTIONS[type_name] or (type_name or ""),
+      trdos_type_raw = string.char(type_byte),
+      trdos_type_description = default_description,
+      trdos_description = default_description,
       comment = is_deleted and "deleted entry" or "",
       trdos_params = { param1 = param1, param2 = param2, sectors = sectors },
+      skip_header = false,
+      detected_skip_header = false,
     }
     entries[#entries + 1] = entry
 
@@ -257,6 +331,7 @@ function M.read(file_path)
       if detected then
         if type(detected.description) == "string" and detected.description ~= "" then
           entry.trdos_type_description = detected.description
+          entry.trdos_description = detected.description
         end
         if type(detected.new_type) == "string" and detected.new_type ~= "" then
           entry.detected_new_type = detected.new_type
@@ -265,9 +340,13 @@ function M.read(file_path)
           entry.comment = detected.comment
         end
         entry.detected_rule_order = detected.order
-        entry.detected_group = detected.group
         entry.detected_special_char = detected.special_char
         entry.detected_show_header = detected.show_header
+        if type(detected.skip_header) == "boolean" then
+          entry.detected_skip_header = detected.skip_header
+        elseif detected.show_header ~= nil then
+          entry.detected_skip_header = detected.show_header == false
+        end
       end
     end
 
@@ -275,6 +354,11 @@ function M.read(file_path)
       entry.pc_name = pc_name_builder.build_pc_name(entry, used_pc_names)
     else
       entry.pc_name = entry.name
+    end
+
+    local packed_hobeta = hobeta_writer.pack_single_entry(entry)
+    if packed_hobeta then
+      entry.hobeta = packed_hobeta
     end
   end
 

@@ -1,6 +1,6 @@
 local path_util = require("xscl.util.path")
 local archive = require("xscl.core.archive")
-local scl_reader = require("xscl.formats.scl_reader")
+local scl_reader = require("theX.formats.scl_reader")
 
 local M = {}
 

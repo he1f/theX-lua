@@ -87,26 +87,30 @@ end
 
 local function make_unique(filename, used_names)
   local used = used_names or {}
-  local key = string.lower(filename)
+  local key = filename
   if not used[key] then
     used[key] = true
     return filename
   end
 
-  local base_part, ext_part = split_base_ext(filename)
-  local suffix = 2
-  while true do
-    local candidate = base_part .. "_" .. tostring(suffix)
-    if ext_part ~= "" then
-      candidate = candidate .. "." .. ext_part
-    end
-    local candidate_key = string.lower(candidate)
-    if not used[candidate_key] then
-      used[candidate_key] = true
-      return candidate
-    end
-    suffix = suffix + 1
+  local num = 0
+  local new_filename
+  repeat
+    num = num + 1
+    new_filename = filename .. num
+  until not used_names[new_filename]
+  used_names[new_filename] = true
+
+  return new_filename
+end
+
+function M.make_unique(filename, used_names)
+  local name_value = filename
+  if type(name_value) ~= "string" or name_value == "" then
+    name_value = "unnamed"
   end
+  local used = used_names or {}
+  return make_unique(name_value, used)
 end
 
 function M.build_pc_name(entry, used_names)
@@ -119,7 +123,7 @@ function M.build_pc_name(entry, used_names)
 
   local ext = special_char .. file_type
   local candidate = base_name .. "." .. ext
-  return make_unique(candidate, used_names)
+  return M.make_unique(candidate, used_names)
 end
 
 return M

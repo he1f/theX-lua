@@ -1,6 +1,7 @@
 local M = {}
 
 local MAX_SIGNATURE_SYMBOLS = 32
+local WILDCARD_TOKEN = {}
 
 local function trim(value)
   if type(value) ~= "string" then
@@ -227,7 +228,7 @@ local function append_pattern_token(pattern, token_text, is_quoted)
   end
 
   if text == "?" then
-    push_pattern_value(pattern, "?")
+    push_pattern_value(pattern, WILDCARD_TOKEN)
     return
   end
 
@@ -315,6 +316,9 @@ local function serialize_string(value)
 end
 
 local function serialize_value(value, indent)
+  if value == WILDCARD_TOKEN then
+    return "nil"
+  end
   local value_type = type(value)
   if value_type == "string" then
     return serialize_string(value)
@@ -393,10 +397,6 @@ local function section_to_rule(section)
   local description = decode_cp866_text(trim(values.description or section.__name or ""))
   if description ~= "" then
     rule.description = description
-  end
-  local group = decode_cp866_text(trim(values.group or ""))
-  if group ~= "" then
-    rule.group = group
   end
 
   set_if_not_nil(rule, "type", parse_type_like(values.type))

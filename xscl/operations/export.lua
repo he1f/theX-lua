@@ -1,6 +1,6 @@
-local raw_writer = require("xscl.formats.raw_writer")
-local hobeta_writer = require("xscl.formats.hobeta_writer")
-local scl_writer = require("xscl.formats.scl_writer")
+local raw_writer = require("theX.formats.raw_writer")
+local hobeta_writer = require("theX.formats.hobeta_writer")
+local scl_writer = require("theX.formats.scl_writer")
 
 local M = {}
 
