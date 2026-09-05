@@ -1,8 +1,43 @@
 local M = {}
+local module_dir_path = nil
 
 local ok_ffi, ffi = pcall(require, "ffi")
 if not ok_ffi then
   return M
+end
+
+do
+  if type(debug) == "table" and type(debug.getinfo) == "function" then
+    local source_info = debug.getinfo(1, "S")
+    local source = type(source_info) == "table" and source_info.source or nil
+    if type(source) == "string" and source:sub(1, 1) == "@" then
+      local module_path = source:sub(2)
+      module_dir_path = module_path:match("^(.*)[/\\][^/\\]+$")
+    end
+  end
+end
+
+local function is_absolute_path(path)
+  if type(path) ~= "string" or path == "" then
+    return false
+  end
+  if path:match("^%a:[/\\]") ~= nil then
+    return true
+  end
+  if path:match("^[/\\][/\\]") ~= nil then
+    return true
+  end
+  if path:match("^/") ~= nil then
+    return true
+  end
+  return false
+end
+
+local function join_path(base_path, child_path)
+  if base_path:match("[/\\]$") ~= nil then
+    return base_path .. child_path
+  end
+  return base_path .. "\\" .. child_path
 end
 
 local function make_buffer(data)
@@ -300,11 +335,25 @@ local function normalize_registry(registry)
 end
 
 function M.load_registry_file(path)
-  local ok, loaded = pcall(dofile, path)
-  if not ok then
-    return nil, loaded
+  if type(path) ~= "string" or path == "" then
+    local error_msg = "Registry path is empty"
+    return nil, error_msg
   end
-  return normalize_registry(loaded)
+
+  local candidates = { path }
+  if not is_absolute_path(path) and type(module_dir_path) == "string" and module_dir_path ~= "" then
+    candidates[#candidates + 1] = join_path(module_dir_path, path)
+  end
+
+  local last_error = nil
+  for i = 1, #candidates do
+    local ok, loaded = pcall(dofile, candidates[i])
+    if ok then
+      return normalize_registry(loaded)
+    end
+    last_error = loaded
+  end
+  return nil, last_error
 end
 
 local function check_signature(scan_data, signature)

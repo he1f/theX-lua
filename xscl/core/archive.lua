@@ -103,7 +103,15 @@ function M.new(host_file, entries)
 end
 
 function M.to_panel_items(object)
-  local out = {}
+  local out = {
+    {
+      FileName = "..",
+      FileSize = 0,
+      FileAttributes = 0,
+      Description = "",
+      CustomColumnData = { "..", "", "", "", "", "" },
+    },
+  }
   for i = 1, #object.Entries do
     local e = object.Entries[i]
     local trdos_name = e.trdos_name or e.name or ""

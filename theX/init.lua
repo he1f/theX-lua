@@ -5,4 +5,5 @@ return {
   export_dialog = require("theX.export_dialog"),
   export_engine = require("theX.export_engine"),
   file_info_dialog = require("theX.file_info_dialog"),
+  transfer_trace = require("theX.transfer_trace"),
 }

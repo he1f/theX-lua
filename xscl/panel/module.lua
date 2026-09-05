@@ -60,7 +60,55 @@ local clone_entries = nil
 local apply_imported_entries_to_object = nil
 local open_panel_objects = setmetatable({}, { __mode = "k" })
 local types_registry_cache = nil
-local types_registry_cache_ready = false
+local pending_transfer_intent_by_object = setmetatable({}, { __mode = "k" })
+local pending_transfer_intent_ttl_seconds = 5
+local module_dir_path = nil
+
+do
+  if type(debug) == "table" and type(debug.getinfo) == "function" then
+    local source_info = debug.getinfo(1, "S")
+    local source = type(source_info) == "table" and source_info.source or nil
+    if type(source) == "string" and source:sub(1, 1) == "@" then
+      local module_path = source:sub(2)
+      module_dir_path = module_path:match("^(.*)[/\\][^/\\]+$")
+    end
+  end
+end
+
+local function remember_transfer_intent(object, intent_kind)
+  if type(object) ~= "table" then
+    return
+  end
+  if intent_kind ~= "copy" and intent_kind ~= "move" then
+    return
+  end
+  pending_transfer_intent_by_object[object] = {
+    kind = intent_kind,
+    stored_at = os.time(),
+  }
+end
+
+local function consume_transfer_intent(object)
+  if type(object) ~= "table" then
+    return nil
+  end
+  local payload = pending_transfer_intent_by_object[object]
+  pending_transfer_intent_by_object[object] = nil
+  if type(payload) ~= "table" then
+    return nil
+  end
+  local stored_at = tonumber(payload.stored_at)
+  local kind = payload.kind
+  if type(stored_at) ~= "number" or (kind ~= "copy" and kind ~= "move") then
+    return nil
+  end
+  local age = os.time() - stored_at
+  local is_fresh = age >= 0 and age <= pending_transfer_intent_ttl_seconds
+  if not is_fresh then
+    return nil
+  end
+  return kind
+end
 
 local function ensure_panel_settings()
   if type(panel_settings) == "table" then
@@ -553,6 +601,46 @@ local function is_shift_f6_key(key_rec)
   return bit64.band(state, forbidden_mask) == 0
 end
 
+local function is_plain_f5_key(key_rec)
+  local virtual_key_code = key_rec.VirtualKeyCode or key_rec.wVirtualKeyCode
+  if virtual_key_code ~= 116 then
+    return false
+  end
+  local control_key_state = key_rec.ControlKeyState
+  if control_key_state == nil then
+    control_key_state = key_rec.dwControlKeyState
+  end
+  local state = tonumber(control_key_state) or 0
+  local modifiers_mask = bit64.bor(
+    F.SHIFT_PRESSED or 0,
+    F.LEFT_CTRL_PRESSED or 0,
+    F.RIGHT_CTRL_PRESSED or 0,
+    F.LEFT_ALT_PRESSED or 0,
+    F.RIGHT_ALT_PRESSED or 0
+  )
+  return bit64.band(state, modifiers_mask) == 0
+end
+
+local function is_plain_f6_key(key_rec)
+  local virtual_key_code = key_rec.VirtualKeyCode or key_rec.wVirtualKeyCode
+  if virtual_key_code ~= 117 then
+    return false
+  end
+  local control_key_state = key_rec.ControlKeyState
+  if control_key_state == nil then
+    control_key_state = key_rec.dwControlKeyState
+  end
+  local state = tonumber(control_key_state) or 0
+  local modifiers_mask = bit64.bor(
+    F.SHIFT_PRESSED or 0,
+    F.LEFT_CTRL_PRESSED or 0,
+    F.RIGHT_CTRL_PRESSED or 0,
+    F.LEFT_ALT_PRESSED or 0,
+    F.RIGHT_ALT_PRESSED or 0
+  )
+  return bit64.band(state, modifiers_mask) == 0
+end
+
 local function sync_selection_order_on_insert(object, handle)
   local current_item = get_current_panel_item(handle)
   if type(current_item) ~= "table" then
@@ -699,7 +787,7 @@ function M.GetOpenPanelInfo(object, handle)
     StartSortMode = use_saved_sort and (tonumber(settings.LastSortMode) or F.SM_UNSORTED) or F.SM_UNSORTED,
     StartSortOrder = use_saved_sort and (tonumber(settings.LastSortOrder) or 0) or 0,
     ShortcutData = object.HostFile or "",
-    Flags = bit64.bor(F.OPIF_SHORTCUT, F.OPIF_ADDDOTS),
+    Flags = F.OPIF_SHORTCUT,
   }
 end
 
@@ -734,6 +822,66 @@ local function resolve_destination_out_dir(dest_path)
   return out_dir
 end
 
+local function looks_like_far_temp_transfer_path(dest_path)
+  local normalized_path = resolve_destination_out_dir(dest_path)
+  if type(normalized_path) ~= "string" or normalized_path == "" then
+    return false
+  end
+  local lowered = normalized_path:gsub("/", "\\"):lower()
+  local file_name = lowered:match("([^\\]+)$") or ""
+  if file_name == "" then
+    return false
+  end
+  return file_name:match("^far[%w_%-%$]+%.tmp$") ~= nil
+end
+local function normalize_windows_path_for_compare(path_value)
+  if type(path_value) ~= "string" or path_value == "" then
+    return nil
+  end
+  local normalized = path_value
+  if type(far.ConvertPath) == "function" then
+    local ok_convert, converted = pcall(far.ConvertPath, normalized, "CPM_FULL")
+    if ok_convert and type(converted) == "string" and converted ~= "" then
+      normalized = converted
+    end
+  end
+  normalized = normalized:gsub("/", "\\"):lower()
+  if normalized:sub(-1) == "\\" then
+    normalized = normalized:sub(1, -2)
+  end
+  return normalized
+end
+
+local function is_same_archive_object(left_object, right_object)
+  if left_object == right_object then
+    return true
+  end
+  local left_host = type(left_object) == "table" and left_object.HostFile or nil
+  local right_host = type(right_object) == "table" and right_object.HostFile or nil
+  local left_norm = normalize_windows_path_for_compare(left_host)
+  local right_norm = normalize_windows_path_for_compare(right_host)
+  if left_norm == nil or right_norm == nil then
+    return false
+  end
+  return left_norm == right_norm
+end
+
+local function is_move_requested(move)
+  if move == true then
+    return true
+  end
+  local move_type = type(move)
+  if move_type == "number" then
+    return move ~= 0
+  end
+  if move_type == "string" then
+    local lowered = move:lower()
+    return lowered ~= "" and lowered ~= "0" and lowered ~= "false" and lowered ~= "nil"
+  end
+  return false
+end
+
+
 local function build_copy_target_text(entries)
   if type(entries) ~= "table" or #entries <= 0 then
     return tr_message("copy_dialog_target_many", { count = 0 })
@@ -744,6 +892,18 @@ local function build_copy_target_text(entries)
     return tr_message("copy_dialog_target_single", { file_name = file_name })
   end
   return tr_message("copy_dialog_target_many", { count = #entries })
+end
+
+local function build_move_target_text(entries)
+  if type(entries) ~= "table" or #entries <= 0 then
+    return tr_message("move_dialog_target_many", { count = 0 })
+  end
+  if #entries == 1 then
+    local entry = entries[1]
+    local file_name = type(entry) == "table" and (entry.pc_name or entry.name) or ""
+    return tr_message("move_dialog_target_single", { file_name = file_name })
+  end
+  return tr_message("move_dialog_target_many", { count = #entries })
 end
 
 local function ask_copy_options(entries, destination_path)
@@ -784,6 +944,50 @@ local function ask_copy_options(entries, destination_path)
     end
 
     local error_msg = tr_message("copy_options_dialog_failed")
+    local details = dialog_err or "no details"
+    far.Message(error_msg .. "\n" .. tostring(details), config.name, nil, "w")
+  end
+  return default_options
+end
+
+local function ask_move_options(entries, destination_path)
+  local selected_count = type(entries) == "table" and #entries or 0
+  local default_options = {
+    format = selected_count <= 1 and "hobeta" or "scl",
+    skip_header = false,
+    out_dir = destination_path or "",
+  }
+  if type(export_dialog) == "table" and type(export_dialog.ask_export_options) == "function" then
+    local ok_call, result, dialog_err = pcall(export_dialog.ask_export_options, {
+      selected_count = selected_count,
+      destination_path = destination_path or "",
+      title = tr_message("move_dialog_title"),
+      copy_target_text = build_move_target_text(entries),
+      format_hobeta_label = tr_message("copy_dialog_format_hobeta"),
+      format_scl_label = tr_message("copy_dialog_format_scl"),
+      skip_headers_label = tr_message("copy_dialog_skip_headers"),
+      copy_button_label = tr_message("move_dialog_button_move"),
+      cancel_button_label = tr_message("copy_dialog_button_cancel"),
+      history_name = "xSCLMovePath",
+    })
+    if not ok_call then
+      local error_msg = tr_message("move_options_dialog_crashed")
+      far.Message(error_msg .. "\n" .. tostring(result), config.name, nil, "w")
+      return default_options
+    end
+
+    if result == false then
+      return false
+    end
+
+    if type(result) == "table" then
+      if type(result.out_dir) ~= "string" or result.out_dir == "" then
+        result.out_dir = destination_path or ""
+      end
+      return result
+    end
+
+    local error_msg = tr_message("move_options_dialog_failed")
     local details = dialog_err or "no details"
     far.Message(error_msg .. "\n" .. tostring(details), config.name, nil, "w")
   end
@@ -1121,11 +1325,9 @@ local function ensure_entry_limits(entry)
 end
 
 local function get_types_registry()
-  if types_registry_cache_ready then
+  if type(types_registry_cache) == "table" then
     return types_registry_cache
   end
-  types_registry_cache_ready = true
-  types_registry_cache = nil
   if type(format_detector) ~= "table" or type(format_detector.load_registry_file) ~= "function" then
     return nil
   end
@@ -1133,7 +1335,33 @@ local function get_types_registry()
   if type(registry_path) ~= "string" or registry_path == "" then
     return nil
   end
-  local loaded_registry = format_detector.load_registry_file(registry_path)
+  local raw_registry_path = registry_path
+  local is_absolute = registry_path:match("^%a:[/\\]") ~= nil or registry_path:match("^[/\\][/\\]") ~= nil
+  if not is_absolute then
+    local config_dir = nil
+    if type(package.searchpath) == "function" then
+      local config_module_path = package.searchpath("xscl.config", package.path)
+      if type(config_module_path) == "string" and config_module_path ~= "" then
+        config_dir = config_module_path:match("^(.*)[/\\][^/\\]+$")
+      end
+    end
+    if (type(config_dir) ~= "string" or config_dir == "") and type(module_dir_path) == "string" then
+      config_dir = module_dir_path:match("^(.*)[/\\][^/\\]+$")
+    end
+    if type(config_dir) == "string" and config_dir ~= "" then
+      registry_path = path_util.join(config_dir, registry_path)
+    end
+  end
+  local loaded_registry, _ = format_detector.load_registry_file(registry_path)
+  if type(loaded_registry) ~= "table" and not is_absolute and type(module_dir_path) == "string" and module_dir_path ~= "" then
+    local module_based_path = path_util.join(module_dir_path, raw_registry_path)
+    if module_based_path ~= registry_path then
+      local retry_registry, _ = format_detector.load_registry_file(module_based_path)
+      if type(retry_registry) == "table" then
+        loaded_registry = retry_registry
+      end
+    end
+  end
   if type(loaded_registry) == "table" then
     types_registry_cache = loaded_registry
   end
@@ -1425,13 +1653,37 @@ local function import_entries_from_panel_object(source_object, panel_items)
   return out
 end
 
-local function remember_pending_panel_transfer(entries)
+local function build_entry_name_set(entries)
+  local names = {}
+  if type(entries) ~= "table" then
+    return names
+  end
+  for i = 1, #entries do
+    local entry = entries[i]
+    local pc_name = type(entry) == "table" and entry.pc_name or nil
+    local panel_name = type(entry) == "table" and entry.name or nil
+    if type(pc_name) == "string" and pc_name ~= "" then
+      names[pc_name] = true
+    end
+    if type(panel_name) == "string" and panel_name ~= "" then
+      names[panel_name] = true
+    end
+  end
+  return names
+end
+
+local function remember_pending_panel_transfer(entries, source_object, source_handle, move_requested)
   if type(entries) ~= "table" or #entries == 0 then
     pending_panel_transfer = nil
     return
   end
   local cached_entries = {}
+  local source_entries = {}
   for i = 1, #entries do
+    local source_entry = entries[i]
+    if type(source_entry) == "table" then
+      source_entries[#source_entries + 1] = source_entry
+    end
     local cloned = clone_entry(entries[i])
     if type(cloned) == "table" then
       cached_entries[#cached_entries + 1] = cloned
@@ -1443,14 +1695,26 @@ local function remember_pending_panel_transfer(entries)
   end
   pending_panel_transfer = {
     entries = cached_entries,
+    source_object = source_object,
+    source_handle = source_handle,
+    move_requested = move_requested == true,
+    source_names = build_entry_name_set(entries),
+    source_entries = source_entries,
   }
 end
 
-local function consume_pending_panel_transfer(panel_items)
+local function consume_pending_panel_transfer(panel_items, meta_out)
   local cached = pending_panel_transfer
   pending_panel_transfer = nil
   if type(cached) ~= "table" or type(cached.entries) ~= "table" or #cached.entries == 0 then
     return nil
+  end
+  if type(meta_out) == "table" then
+    meta_out.source_object = cached.source_object
+    meta_out.source_handle = cached.source_handle
+    meta_out.move_requested = cached.move_requested == true
+    meta_out.source_names = type(cached.source_names) == "table" and cached.source_names or {}
+    meta_out.source_entries = type(cached.source_entries) == "table" and cached.source_entries or {}
   end
 
   local selected_names = {}
@@ -1531,11 +1795,8 @@ local function is_xscl_panel_copy_destination(current_object)
     return false
   end
   local passive_object = passive_pinfo.PluginObject
-  if not looks_like_archive_object(passive_object) or passive_object == current_object then
+  if not looks_like_archive_object(passive_object) then
     return false
-  end
-  if guid_equals(passive_pinfo.OwnerGuid, config.panel_module_guid) then
-    return true
   end
   return true
 end
@@ -1550,9 +1811,13 @@ local function get_passive_archive_panel_target(current_object)
     local pinfo = probes[i]
     if type(pinfo) == "table" then
       local candidate = pinfo.PluginObject
-      if looks_like_archive_object(candidate) and candidate ~= current_object then
+      local is_passive_probe = i == 1
+      if looks_like_archive_object(candidate) and (candidate ~= current_object or is_passive_probe) then
         local score = (guid_equals(pinfo.OwnerGuid, config.panel_module_guid) and 100 or 0)
           + (tonumber(pinfo.SelectedItemsNumber) or 0)
+        if candidate == current_object and not is_passive_probe then
+          score = score - 1
+        end
         if best == nil or score > best.score then
           best = {
             object = candidate,
@@ -1586,16 +1851,25 @@ local function get_passive_archive_panel_target(current_object)
   return nil
 end
 
-local function copy_entries_between_xscl_panels(source_entries, source_object)
+local function copy_entries_between_xscl_panels(source_entries, source_object, move_requested)
   local passive_target = get_passive_archive_panel_target(source_object)
   if type(passive_target) ~= "table" then
     return nil, "no_passive_target"
   end
+  local same_archive = is_same_archive_object(source_object, passive_target.object)
+  if same_archive and move_requested then
+    return 1, "same_archive_move", passive_target.object, passive_target.handle
+  end
   local imported_entries = clone_entries(source_entries)
   if #imported_entries == 0 then
-    return 1, "empty_imported_entries"
+    return 1, "empty_imported_entries", passive_target.object, passive_target.handle
   end
-  return apply_imported_entries_to_object(passive_target.object, passive_target.handle, imported_entries), "apply_to_passive"
+  local mode = same_archive and "same_archive_copy" or "apply_to_passive"
+  local apply_result = apply_imported_entries_to_object(passive_target.object, passive_target.handle, imported_entries)
+  return apply_result,
+    mode,
+    passive_target.object,
+    passive_target.handle
 end
 
 clone_entries = function(entries)
@@ -1653,11 +1927,24 @@ apply_imported_entries_to_object = function(destination_object, destination_hand
   destination_object.Entries = rebuilt.Entries
   destination_object.IndexByName = rebuilt.IndexByName
   destination_object.SelectionState = rebuilt.SelectionState
+  for candidate_object, _ in pairs(open_panel_objects) do
+    if type(candidate_object) == "table"
+      and candidate_object ~= destination_object
+      and is_same_archive_object(candidate_object, destination_object)
+    then
+      local peer_rebuilt = archive.new(host_file, clone_entries(rebuilt.Entries))
+      candidate_object.Entries = peer_rebuilt.Entries
+      candidate_object.IndexByName = peer_rebuilt.IndexByName
+      candidate_object.SelectionState = peer_rebuilt.SelectionState
+    end
+  end
 
   if destination_handle ~= nil then
     call_panel_method(panel.UpdatePanel, destination_handle)
     call_panel_method(panel.RedrawPanel, destination_handle)
   end
+  call_panel_method(panel.UpdatePanel, nil, 1)
+  call_panel_method(panel.RedrawPanel, nil, 1)
   call_panel_method(panel.UpdatePanel, nil, 0)
   call_panel_method(panel.RedrawPanel, nil, 0)
   return 1
@@ -1684,6 +1971,209 @@ save_archive_entries = function(host_file, entries)
     return nil, pack_error
   end
   return raw_writer.write_file(host_file, packed)
+end
+
+local function resolve_panel_handle_by_object(target_object)
+  if type(target_object) ~= "table" then
+    return nil
+  end
+  local probes = {
+    call_panel_method(panel.GetPanelInfo, nil, 1),
+    call_panel_method(panel.GetPanelInfo, nil, 0),
+  }
+  for i = 1, #probes do
+    local pinfo = probes[i]
+    if type(pinfo) == "table" and pinfo.PluginObject == target_object then
+      return pinfo.PanelHandle or pinfo.Handle
+    end
+  end
+  return nil
+end
+
+local function move_entries_within_same_archive(source_object, source_handle, source_entries, peer_object, peer_handle)
+  if type(source_object) ~= "table" then
+    local error_msg = "invalid source archive object"
+    return nil, error_msg
+  end
+  local current_entries = type(source_object.Entries) == "table" and source_object.Entries or {}
+  local selected_map = {}
+  local selected_order = {}
+  for i = 1, #source_entries do
+    local entry = source_entries[i]
+    if type(entry) == "table" and not selected_map[entry] then
+      selected_map[entry] = true
+      selected_order[#selected_order + 1] = entry
+    end
+  end
+  if #selected_order == 0 then
+    return true
+  end
+
+  local kept_entries = {}
+  for i = 1, #current_entries do
+    local entry = current_entries[i]
+    if not selected_map[entry] then
+      kept_entries[#kept_entries + 1] = entry
+    end
+  end
+  for i = 1, #selected_order do
+    kept_entries[#kept_entries + 1] = selected_order[i]
+  end
+
+  local host_file = source_object.HostFile
+  if type(host_file) ~= "string" or host_file == "" then
+    return nil, tr_message("destination_archive_path_empty")
+  end
+  local rebuilt = archive.new(host_file, kept_entries)
+  local saved, save_error = save_archive_entries(host_file, rebuilt.Entries)
+  if not saved then
+    return nil, save_error or tr_message("save_failed")
+  end
+
+  source_object.Entries = rebuilt.Entries
+  source_object.IndexByName = rebuilt.IndexByName
+  source_object.SelectionState = rebuilt.SelectionState
+
+  if type(peer_object) == "table"
+    and peer_object ~= source_object
+    and is_same_archive_object(source_object, peer_object)
+  then
+    local peer_rebuilt = archive.new(host_file, clone_entries(rebuilt.Entries))
+    peer_object.Entries = peer_rebuilt.Entries
+    peer_object.IndexByName = peer_rebuilt.IndexByName
+    peer_object.SelectionState = peer_rebuilt.SelectionState
+  end
+
+  local resolved_source_handle = source_handle or resolve_panel_handle_by_object(source_object)
+  if resolved_source_handle ~= nil then
+    call_panel_method(panel.UpdatePanel, resolved_source_handle)
+    call_panel_method(panel.RedrawPanel, resolved_source_handle)
+  end
+  if type(peer_object) == "table" then
+    local resolved_peer_handle = peer_handle or resolve_panel_handle_by_object(peer_object)
+    if resolved_peer_handle ~= nil then
+      call_panel_method(panel.UpdatePanel, resolved_peer_handle)
+      call_panel_method(panel.RedrawPanel, resolved_peer_handle)
+    end
+  end
+  call_panel_method(panel.UpdatePanel, nil, 1)
+  call_panel_method(panel.RedrawPanel, nil, 1)
+  call_panel_method(panel.UpdatePanel, nil, 0)
+  call_panel_method(panel.RedrawPanel, nil, 0)
+  return true
+end
+
+local function collect_entries_by_panel_items(source_object, panel_items)
+  local out = {}
+  if type(source_object) ~= "table" then
+    return out
+  end
+  local source_index = type(source_object.IndexByName) == "table" and source_object.IndexByName or nil
+  local dedup = {}
+  if type(source_index) == "table" and type(panel_items) == "table" then
+    for i = 1, #panel_items do
+      local item = panel_items[i]
+      local file_name = type(item) == "table" and item.FileName or nil
+      if type(file_name) == "string" and file_name ~= "" and file_name ~= ".." then
+        local source_entry = source_index[file_name]
+        if type(source_entry) == "table" and not dedup[source_entry] then
+          dedup[source_entry] = true
+          out[#out + 1] = source_entry
+        end
+      end
+    end
+  end
+  if #out == 0 then
+    local selected = archive.select_entries(source_object, type(panel_items) == "table" and panel_items or {})
+    for i = 1, #selected do
+      local source_entry = selected[i]
+      if type(source_entry) == "table" and not dedup[source_entry] then
+        dedup[source_entry] = true
+        out[#out + 1] = source_entry
+      end
+    end
+  end
+  return out
+end
+
+local function collect_entries_by_name_set(source_object, name_set)
+  local out = {}
+  if type(source_object) ~= "table" or type(name_set) ~= "table" then
+    return out
+  end
+  local current_entries = type(source_object.Entries) == "table" and source_object.Entries or {}
+  local dedup = {}
+  for i = 1, #current_entries do
+    local entry = current_entries[i]
+    local pc_name = type(entry) == "table" and entry.pc_name or nil
+    local panel_name = type(entry) == "table" and entry.name or nil
+    local is_selected = (type(pc_name) == "string" and name_set[pc_name] == true)
+      or (type(panel_name) == "string" and name_set[panel_name] == true)
+    if is_selected and not dedup[entry] then
+      dedup[entry] = true
+      out[#out + 1] = entry
+    end
+  end
+  return out
+end
+
+local function remove_entries_from_archive_object(target_object, target_handle, entries_to_remove)
+  if type(target_object) ~= "table" then
+    local error_msg = "invalid target archive object"
+    return nil, error_msg
+  end
+  if type(entries_to_remove) ~= "table" or #entries_to_remove == 0 then
+    return true
+  end
+
+  local remove_map = {}
+  for i = 1, #entries_to_remove do
+    local entry = entries_to_remove[i]
+    if type(entry) == "table" then
+      remove_map[entry] = true
+    end
+  end
+
+  local current_entries = type(target_object.Entries) == "table" and target_object.Entries or {}
+  local kept_entries = {}
+  local removed_count = 0
+  for i = 1, #current_entries do
+    local entry = current_entries[i]
+    if remove_map[entry] then
+      removed_count = removed_count + 1
+    else
+      kept_entries[#kept_entries + 1] = entry
+    end
+  end
+  if removed_count == 0 then
+    return true
+  end
+
+  local host_file = target_object.HostFile
+  if type(host_file) ~= "string" or host_file == "" then
+    return nil, tr_message("destination_archive_path_empty")
+  end
+
+  local rebuilt = archive.new(host_file, kept_entries)
+  local saved, save_error = save_archive_entries(host_file, rebuilt.Entries)
+  if not saved then
+    return nil, save_error or tr_message("save_failed")
+  end
+
+  target_object.Entries = rebuilt.Entries
+  target_object.IndexByName = rebuilt.IndexByName
+  target_object.SelectionState = rebuilt.SelectionState
+
+  local resolved_handle = target_handle or resolve_panel_handle_by_object(target_object)
+  if resolved_handle ~= nil then
+    call_panel_method(panel.UpdatePanel, resolved_handle)
+    call_panel_method(panel.RedrawPanel, resolved_handle)
+  end
+  call_panel_method(panel.UpdatePanel, nil, 1)
+  call_panel_method(panel.RedrawPanel, nil, 1)
+  call_panel_method(panel.UpdatePanel, nil, 0)
+  call_panel_method(panel.RedrawPanel, nil, 0)
+  return true
 end
 
 local function resolve_panel_items_for_transfer(handle, panel_items)
@@ -1783,15 +2273,45 @@ end
 function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
   remember_open_panel_object(object)
   pending_panel_transfer = nil
+  local move_requested = is_move_requested(move)
+  local intent_kind = consume_transfer_intent(object)
+  if not move_requested and intent_kind == "move" then
+    move_requested = true
+  end
   local items = resolve_panel_items_for_transfer(handle, panel_items)
   sync_selection_order(object, handle, items)
   local entries = archive.select_entries(object, items)
   if #entries == 0 then
     return true
   end
-  local copy_result = copy_entries_between_xscl_panels(entries, object)
+  local copy_result, copy_mode, copy_target_object, copy_target_handle = copy_entries_between_xscl_panels(
+    entries,
+    object,
+    move_requested
+  )
   if copy_result ~= nil then
     if copy_result == 1 then
+      if move_requested then
+        if copy_mode == "same_archive_move" then
+          local moved, move_error = move_entries_within_same_archive(
+            object,
+            handle,
+            entries,
+            copy_target_object,
+            copy_target_handle
+          )
+          if not moved then
+            far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(move_error), config.name, nil, "w")
+            return false
+          end
+        else
+          local removed, remove_error = remove_entries_from_archive_object(object, handle, entries)
+          if not removed then
+            far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
+            return false
+          end
+        end
+      end
       pending_panel_transfer = { already_applied = true }
       clear_object_selection_state(object)
       clear_panel_selection_flags(handle, items)
@@ -1801,8 +2321,22 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
     end
     return false
   end
+  local has_xscl_destination = is_xscl_panel_copy_destination(object)
+  local destination_looks_like_far_temp = looks_like_far_temp_transfer_path(dest_path)
+  if not has_xscl_destination and destination_looks_like_far_temp then
+    local registered_peer = find_registered_peer_object(object)
+    if type(registered_peer) == "table" and registered_peer ~= object then
+      has_xscl_destination = true
+    elseif intent_kind == "copy" or intent_kind == "move" then
+      has_xscl_destination = true
+    end
+  end
+  if has_xscl_destination then
+    remember_pending_panel_transfer(entries, object, handle, move_requested)
+    return true
+  end
   local default_out_dir = resolve_destination_out_dir(dest_path)
-  local options = ask_copy_options(entries, default_out_dir)
+  local options = move_requested and ask_move_options(entries, default_out_dir) or ask_copy_options(entries, default_out_dir)
   if options == false then
     return false
   end
@@ -1816,6 +2350,13 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
   if not ok then
     far.Message(err or tr_message("export_failed"), config.name, nil, "w")
     return false
+  end
+  if move_requested then
+    local removed, remove_error = remove_entries_from_archive_object(object, handle, entries)
+    if not removed then
+      far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
+      return false
+    end
   end
   clear_object_selection_state(object)
   clear_panel_selection_flags(handle, items)
@@ -1835,10 +2376,21 @@ function M.PutFiles(object, handle, panel_items, move, src_path, op_mode)
     return 1
   end
   local items = resolve_panel_items_for_transfer(handle, panel_items)
+  local move_requested = is_move_requested(move)
 
   local src_root = resolve_source_root(src_path)
   local imported_entries = {}
   local source_panel_object = find_source_panel_object(object)
+  local source_handle_for_move = nil
+  local pending_meta = {}
+  if source_panel_object == object then
+    source_panel_object = nil
+  end
+  local source_entries_for_move = {}
+  if move_requested and type(source_panel_object) == "table" then
+    source_handle_for_move = resolve_panel_handle_by_object(source_panel_object)
+    source_entries_for_move = collect_entries_by_panel_items(source_panel_object, items)
+  end
   if type(source_panel_object) == "table" then
     local from_source_panel = import_entries_from_panel_object(source_panel_object, items)
     if type(from_source_panel) == "table" and #from_source_panel > 0 then
@@ -1880,10 +2432,23 @@ function M.PutFiles(object, handle, panel_items, move, src_path, op_mode)
   end
 
   if #imported_entries == 0 then
-    local from_cache = consume_pending_panel_transfer(items)
+    local from_cache = consume_pending_panel_transfer(items, pending_meta)
     if type(from_cache) == "table" and #from_cache > 0 then
       for i = 1, #from_cache do
         imported_entries[#imported_entries + 1] = from_cache[i]
+      end
+    end
+    if not move_requested and pending_meta.move_requested == true then
+      move_requested = true
+    end
+    if type(pending_meta.source_object) == "table" and pending_meta.source_object ~= object then
+      source_panel_object = pending_meta.source_object
+      source_handle_for_move = pending_meta.source_handle
+      if move_requested and #source_entries_for_move == 0 and type(pending_meta.source_entries) == "table" then
+        source_entries_for_move = pending_meta.source_entries
+      end
+      if move_requested and #source_entries_for_move == 0 and type(pending_meta.source_names) == "table" then
+        source_entries_for_move = collect_entries_by_name_set(source_panel_object, pending_meta.source_names)
       end
     end
   end
@@ -1897,7 +2462,26 @@ function M.PutFiles(object, handle, panel_items, move, src_path, op_mode)
     )
     return 0
   end
-  return apply_imported_entries_to_object(object, handle, imported_entries)
+  local imported = apply_imported_entries_to_object(object, handle, imported_entries)
+  if imported ~= 1 then
+    return imported
+  end
+
+  if move_requested and type(source_panel_object) == "table" and not is_same_archive_object(source_panel_object, object) then
+    if #source_entries_for_move == 0 then
+      source_entries_for_move = collect_entries_by_panel_items(source_panel_object, items)
+    end
+    if #source_entries_for_move == 0 and type(pending_meta.source_names) == "table" then
+      source_entries_for_move = collect_entries_by_name_set(source_panel_object, pending_meta.source_names)
+    end
+    local source_handle = source_handle_for_move or resolve_panel_handle_by_object(source_panel_object)
+    local removed, remove_error = remove_entries_from_archive_object(source_panel_object, source_handle, source_entries_for_move)
+    if not removed then
+      far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
+      return 0
+    end
+  end
+  return imported
 end
 local function confirm_delete_entries(entries)
   local count = #entries
@@ -2320,6 +2904,32 @@ function M.ProcessPanelInput(object, handle, rec)
 
   if is_plain_insert_key(key_rec) then
     sync_selection_order_on_insert(object, handle)
+  end
+
+  if is_plain_f5_key(key_rec) then
+    remember_transfer_intent(object, "copy")
+    local passive_target = get_passive_archive_panel_target(object)
+    if type(passive_target) == "table"
+      and type(passive_target.object) == "table"
+      and passive_target.object ~= object
+    then
+      local copied = M.GetFiles(object, handle, nil, false, nil, nil)
+      if copied == true then
+        return 1
+      end
+    end
+  elseif is_plain_f6_key(key_rec) then
+    remember_transfer_intent(object, "move")
+    local passive_target = get_passive_archive_panel_target(object)
+    if type(passive_target) == "table"
+      and type(passive_target.object) == "table"
+      and passive_target.object ~= object
+    then
+      local moved = M.GetFiles(object, handle, nil, true, nil, nil)
+      if moved == true then
+        return 1
+      end
+    end
   end
 
   local virtual_key_code = key_rec.VirtualKeyCode or key_rec.wVirtualKeyCode
