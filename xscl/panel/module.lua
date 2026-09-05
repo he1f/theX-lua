@@ -663,316 +663,56 @@ local function looks_like_xscl_c0_widths(widths)
 end
 
 
-local function resolve_c0_column_width(object, panel_handle)
-  local width_probes = {
-    { name = "wp1", value = call_panel_method(panel.GetColumnWidths, nil, 1) },
-    { name = "arg_wp1", value = call_panel_method(panel.GetColumnWidths, 1) },
-    { name = "handle_wp1", value = call_panel_method(panel.GetColumnWidths, panel_handle, 1) },
-    { name = "handle", value = call_panel_method(panel.GetColumnWidths, panel_handle) },
-    { name = "nil", value = call_panel_method(panel.GetColumnWidths, nil) },
-    { name = "empty", value = call_panel_method(panel.GetColumnWidths) },
-  }
-  for i = 1, #width_probes do
-    local probe = width_probes[i]
-    local probe_widths = normalize_widths(probe.value)
-    if looks_like_xscl_c0_widths(probe_widths) then
-      local probe_c0_width = tonumber(probe_widths[1])
-      if probe_c0_width and probe_c0_width > 0 then
-        return math.floor(probe_c0_width)
-      end
-    end
-  end
-  local active_pinfo = call_panel_method(panel.GetPanelInfo, nil, 1)
-  local active_types = resolve_runtime_column_types(nil, 1, active_pinfo)
-  local active_widths = call_panel_method(panel.GetColumnWidths, nil, 1)
-  local active_widths_array = normalize_widths(active_widths)
-  if looks_like_xscl_c0_widths(active_widths_array) then
-    local active_shape_width = tonumber(active_widths_array[1])
-    if active_shape_width and active_shape_width > 0 then
-      return math.floor(active_shape_width)
-    end
-  end
-  if type(active_pinfo) == "table" then
-    if (type(active_types) ~= "string" or active_types == "")
-      and type(active_pinfo.ColumnTypes) == "string"
-    then
-      active_types = active_pinfo.ColumnTypes
-    end
-    if (type(active_widths) ~= "string" or active_widths == "")
-      and type(active_pinfo.ColumnWidths) == "string"
-    then
-      active_widths = active_pinfo.ColumnWidths
-    end
-    active_widths_array = normalize_widths(active_widths)
-    local active_c0_index = find_c0_index(active_types)
-    if active_c0_index then
-      local active_width = tonumber(active_widths_array[active_c0_index])
-      if active_width and active_width > 0 then
-        return math.floor(active_width)
-      end
-    end
-  end
-  local candidates = {
-    {
-      name = "active",
-      pinfo = call_panel_method(panel.GetPanelInfo, nil, 1),
-      types = nil,
-      widths = call_panel_method(panel.GetColumnWidths, nil, 1),
-      format = call_panel_method(panel.GetPanelFormat, nil, 1),
-    },
-    {
-      name = "passive",
-      pinfo = call_panel_method(panel.GetPanelInfo, nil, 0),
-      types = nil,
-      widths = call_panel_method(panel.GetColumnWidths, nil, 0),
-      format = call_panel_method(panel.GetPanelFormat, nil, 0),
-    },
-    {
-      name = "handle",
-      pinfo = call_panel_method(panel.GetPanelInfo, panel_handle),
-      types = nil,
-      widths = call_panel_method(panel.GetColumnWidths, panel_handle),
-      format = call_panel_method(panel.GetPanelFormat, panel_handle),
-    },
-  }
-
-  candidates[1].types = resolve_runtime_column_types(nil, 1, candidates[1].pinfo)
-  candidates[2].types = resolve_runtime_column_types(nil, 0, candidates[2].pinfo)
-  candidates[3].types = resolve_runtime_column_types(panel_handle, nil, candidates[3].pinfo)
-
-  for i = 1, #candidates do
-    local pinfo = candidates[i].pinfo
-    if type(pinfo) == "table" then
-      if (type(candidates[i].types) ~= "string" or candidates[i].types == "")
-        and type(pinfo.ColumnTypes) == "string"
-      then
-        candidates[i].types = pinfo.ColumnTypes
-      end
-      if (type(candidates[i].widths) ~= "string" or candidates[i].widths == "")
-        and type(pinfo.ColumnWidths) == "string"
-      then
-        candidates[i].widths = pinfo.ColumnWidths
-      end
-      candidates[i].is_same_object = pinfo.PluginObject == object
-      candidates[i].is_same_owner = type(pinfo.OwnerGuid) == "string" and pinfo.OwnerGuid == config.panel_module_guid
-    else
-      candidates[i].is_same_object = false
-      candidates[i].is_same_owner = false
-    end
-    local normalized_widths = normalize_widths(candidates[i].widths)
-    candidates[i].widths_array = normalized_widths
-    candidates[i].looks_like_c0_widths = looks_like_xscl_c0_widths(normalized_widths)
-    local c0_idx = find_c0_index(candidates[i].types)
-    candidates[i].has_c0 = c0_idx ~= nil
-  end
-
-  local selected = nil
-
-  for i = 1, #candidates do
-    if candidates[i].is_same_object and candidates[i].has_c0 then
-      selected = candidates[i]
-      break
-    end
-  end
-  if not selected then
-    for i = 1, #candidates do
-      if candidates[i].is_same_owner and candidates[i].has_c0 then
-        selected = candidates[i]
-        break
-      end
-    end
-  end
-  if not selected then
-    for i = 1, #candidates do
-      if candidates[i].has_c0 then
-        selected = candidates[i]
-        break
-      end
-    end
-  end
-  if not selected then
-    for i = 1, #candidates do
-      if candidates[i].looks_like_c0_widths then
-        selected = candidates[i]
-        break
-      end
-    end
-  end
-  if not selected then
-    for i = 1, #candidates do
-      if candidates[i].is_same_object then
-        selected = candidates[i]
-        break
-      end
-    end
-  end
-  if not selected then
-    for i = 1, #candidates do
-      if candidates[i].is_same_owner then
-        selected = candidates[i]
-        break
-      end
-    end
-  end
-  if not selected then
-    selected = candidates[3] or candidates[1]
-  end
-
-  local pinfo = selected and selected.pinfo or nil
-  if type(pinfo) ~= "table" then
-    return nil
-  end
-
-  local runtime_types = selected.types
-  local runtime_widths = selected.widths
-  local mode_config = resolve_mode_config(tonumber(pinfo.ViewMode), runtime_types)
-  local function resolve_auto_c0_width(pinfo_value, types_array, widths_array, c0_idx)
-    if type(pinfo_value) ~= "table" or type(types_array) ~= "table" or type(widths_array) ~= "table" then
-      return nil
-    end
-    if type(c0_idx) ~= "number" or c0_idx < 1 then
-      return nil
-    end
-    local panel_rect = pinfo_value.PanelRect
-    if type(panel_rect) ~= "table" then
-      return nil
-    end
-    local left = tonumber(panel_rect.left or panel_rect[1]) or 0
-    local right = tonumber(panel_rect.right or panel_rect[3]) or 0
-    local panel_width = right - left + 1
-    local inner_width = panel_width - 2
-    if inner_width <= 0 then
-      return nil
-    end
-
-    local fixed_sum = 0
-    local auto_columns = 0
-    for i = 1, #types_array do
-      local w = tonumber(widths_array[i]) or 0
-      if w > 0 then
-        fixed_sum = fixed_sum + w
-      else
-        auto_columns = auto_columns + 1
-      end
-    end
-    if auto_columns <= 0 then
-      return nil
-    end
-
-    local separators = #types_array - 1
-    local free_space = inner_width - fixed_sum - separators
-    if free_space <= 0 then
-      return nil
-    end
-
-    local base_auto = math.floor(free_space / auto_columns)
-    if base_auto <= 0 then
-      return nil
-    end
-    local remainder = free_space - (base_auto * auto_columns)
-
-    local auto_seen = 0
-    for i = 1, #types_array do
-      local w = tonumber(widths_array[i]) or 0
-      if w > 0 then
-        if i == c0_idx then
-          return w
-        end
-      else
-        auto_seen = auto_seen + 1
-        local auto_w = base_auto + ((auto_seen <= remainder) and 1 or 0)
-        if i == c0_idx then
-          return auto_w
-        end
-      end
-    end
-    return nil
-  end
-
-  local widths = selected.widths_array or normalize_widths(runtime_widths)
-  local types = split_csv(runtime_types or "")
-  local c0_index = find_c0_index(runtime_types)
-  if not c0_index and mode_config then
-    c0_index = find_c0_index(mode_config.ColumnTypes)
-    if #types == 0 then
-      types = split_csv(mode_config.ColumnTypes or "")
-    end
-  end
-  if #types == 0 and selected.looks_like_c0_widths then
-    if #widths == 4 then
-      types = { "C0", "S", "C1", "C2" }
-    elseif #widths == 2 then
-      types = { "C0", "C3" }
-    end
-  end
-  if not c0_index then
-    for i = 1, #types do
-      if type(types[i]) == "string" and types[i]:match("^C0") then
-        c0_index = i
-        break
-      end
-    end
-  end
-  if #widths == 0 and mode_config then
-    widths = split_csv(mode_config.ColumnWidths or "")
-  end
-  if #widths == 0 and #types == 4 then
-    widths = { "0", "5", "5", "3" }
-  elseif #widths == 0 and #types == 2 then
-    widths = { "12", "0" }
-  end
-  if mode_config and (widths[c0_index or 1] == nil or widths[c0_index or 1] == "") then
-    local mode_widths = split_csv(mode_config.ColumnWidths or "")
-    for i = 1, #mode_widths do
-      if widths[i] == nil or widths[i] == "" then
-        widths[i] = mode_widths[i]
-      end
-    end
-  end
-  if not c0_index then
-    local synthetic_mode = mode_config
-    if not synthetic_mode or type(synthetic_mode.ColumnTypes) ~= "string" or not synthetic_mode.ColumnTypes:find("C0", 1, true) then
-      synthetic_mode = panel_modes[5]
-    end
-    if type(synthetic_mode) == "table" then
-      local synthetic_types = split_csv(synthetic_mode.ColumnTypes or "")
-      local synthetic_widths = split_csv(synthetic_mode.ColumnWidths or "")
-      local synthetic_c0_index = find_c0_index(synthetic_mode.ColumnTypes)
-      if synthetic_c0_index then
-        local synthetic_width = tonumber(synthetic_widths[synthetic_c0_index])
-        if synthetic_width and synthetic_width > 0 then
-          return math.floor(synthetic_width)
-        end
-        local synthetic_auto = resolve_auto_c0_width(pinfo, synthetic_types, synthetic_widths, synthetic_c0_index)
-        if synthetic_auto and synthetic_auto > 0 then
-          return math.floor(synthetic_auto)
-        end
-      end
-    end
-    if selected.looks_like_c0_widths then
-      local inferred_width = tonumber(widths[1])
-      if inferred_width and inferred_width > 0 then
-        return math.floor(inferred_width)
-      end
-    end
-    return nil
-  end
-
-  local width = tonumber(widths[c0_index])
-  if width and width > 0 then
-    return math.floor(width)
-  end
-  local auto_width = resolve_auto_c0_width(pinfo, types, widths, c0_index)
-  if auto_width and auto_width > 0 then
-    return math.floor(auto_width)
-  end
-  if selected.looks_like_c0_widths and c0_index ~= 1 then
-    local inferred_width = tonumber(widths[1])
-    if inferred_width and inferred_width > 0 then
-      return math.floor(inferred_width)
+local function find_in_array(line, target)
+  local array = split_csv(line)
+  for i = 1, #array do
+    if type(array[i]) == "string" and array[i]:match("^" .. target) then
+      return i
     end
   end
   return nil
+end
+
+local function resolve_c0_column_width(object, panel_handle)
+  local column_types = panel.GetColumnTypes(panel_handle, 1)
+  local c0_idx = find_in_array(column_types, "C0")
+
+  if c0_idx == nil then
+    return nil
+  end
+
+  local column_widths = panel.GetColumnWidths(panel_handle, 1)
+  local widths = split_csv(column_widths)
+  local c0_width = tonumber(widths[c0_idx])
+
+  if c0_width ~= 0 then
+    return c0_width
+  end
+
+  local pinfo = panel.GetPanelInfo(panel_handle, 1)
+  local panel_rect = pinfo.PanelRect
+  if type(panel_rect) ~= "table" then
+    return nil
+  end
+
+  local left = tonumber(panel_rect.left)
+  local right = tonumber(panel_rect.right)
+
+  local panel_width = right - left + 1
+  local inner_width = panel_width - 2
+  if inner_width <= 0 then
+    return nil
+  end
+
+  local fixed_sum = 0
+  for i = 1, #widths do
+    local w = tonumber(widths[i]) or 0
+    if w > 0 then
+      fixed_sum = fixed_sum + w
+    end
+  end
+  local separators = #widths - 1
+  return inner_width - fixed_sum - separators
 end
 
 local function align_c0_extension(value, column_width, ext_hint)
