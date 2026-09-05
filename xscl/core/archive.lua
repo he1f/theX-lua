@@ -31,13 +31,6 @@ local function resolve_entry(object, panel_item)
   if type(panel_item) ~= "table" then
     return nil
   end
-  local user_data = tonumber(panel_item.UserData)
-  if user_data and user_data >= 1 then
-    local entry = object.Entries[math.floor(user_data)]
-    if type(entry) == "table" then
-      return entry
-    end
-  end
   local name = panel_item.FileName
   if type(name) == "string" and name ~= "" then
     return object.IndexByName[name]
@@ -129,7 +122,6 @@ function M.to_panel_items(object)
       FileName = e.pc_name or e.name,
       FileSize = e.size or #(e.data or ""),
       FileAttributes = file_attributes,
-      UserData = e.__xscl_entry_id or i,
       Description = panel_description,
       CustomColumnData = {
         e.name or "",

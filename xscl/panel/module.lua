@@ -2429,6 +2429,22 @@ function M.ProcessPanelInput(object, handle, rec)
 end
 
 function M.ClosePanel(object, handle)
+  local empty_items = {}
+  call_panel_method(panel.SetFindList, handle, nil, empty_items)
+  call_panel_method(panel.SetFindList, nil, 1, empty_items)
+  if type(object) == "table" then
+    object.Entries = {}
+    object.IndexByName = {}
+    object.SelectionState = {
+      next_seq = 0,
+      selected_keys = {},
+      order_by_key = {},
+    }
+    open_panel_objects[object] = nil
+  end
+  pending_panel_transfer = nil
+  call_panel_method(panel.UpdatePanel, handle)
+  call_panel_method(panel.RedrawPanel, handle)
   local pinfo = call_panel_method(panel.GetPanelInfo, handle)
   update_settings_from_panel_info(pinfo, false)
   save_panel_settings()
