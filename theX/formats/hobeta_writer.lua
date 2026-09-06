@@ -17,8 +17,12 @@ local function word_le(value)
 end
 
 local function normalize_name_bytes(entry)
-  if type(entry.trdos_name_raw) == "string" and #entry.trdos_name_raw >= 8 then
-    return entry.trdos_name_raw:sub(1, 8)
+  if type(entry.trdos_name_raw) == "string" and entry.trdos_name_raw ~= "" then
+    local raw_name = entry.trdos_name_raw
+    if #raw_name < 8 then
+      raw_name = raw_name .. string.rep(" ", 8 - #raw_name)
+    end
+    return string.sub(raw_name, 1, 8)
   end
 
   local source = entry.trdos_name or entry.name or ""
@@ -29,17 +33,17 @@ local function normalize_name_bytes(entry)
   if #source < 8 then
     source = source .. string.rep(" ", 8 - #source)
   end
-  return source:sub(1, 8)
+  return string.sub(source, 1, 8)
 end
 
 local function normalize_type_byte(entry)
-  if type(entry.trdos_type_raw) == "string" and #entry.trdos_type_raw >= 1 then
-    return entry.trdos_type_raw:sub(1, 1)
+  if type(entry.trdos_type_raw) == "string" and entry.trdos_type_raw ~= "" then
+    return string.sub(entry.trdos_type_raw, 1, 1)
   end
 
   local source = entry.trdos_type
   if type(source) == "string" and source ~= "" then
-    return source:sub(1, 1)
+    return string.sub(source, 1, 1)
   end
   return "B"
 end
@@ -61,7 +65,7 @@ local function normalize_data(entry)
   end
   return string.rep("\0", math.floor(size)), false
 end
-local function calc_sectors_word(entry, data, length_word)
+local function calc_sectors_byte(entry, data, length_word)
   local data_length = #data
   local logical_length = tonumber(length_word) or 0
   if logical_length < 0 then
@@ -101,14 +105,14 @@ local function normalize_payload_size(data, sectors)
     return ""
   end
   if #data >= payload_size then
-    return data:sub(1, payload_size)
+    return string.sub(data, 1, payload_size)
   end
   return data .. string.rep("\0", payload_size - #data)
 end
 
 local function calc_checksum(header15)
   local sum = 0
-  for i = 1, #header15 do
+  for i = 1, 15 do
     sum = sum + string.byte(header15, i)
   end
   return (105 + 257 * sum) % 65536
@@ -125,7 +129,11 @@ function M.pack_single_entry(entry)
   local file_type = normalize_type_byte(entry)
   local start = tonumber(entry.trdos_start) or 0
   local length = calc_length_word(entry, file_data)
-  local sectors = calc_sectors_word(entry, file_data, length)
+  local sectors = calc_sectors_byte(entry, file_data, length)
+  if sectors < 0 or sectors > 255 then
+    local error_msg = "invalid TR-DOS sectors value for Hobeta entry"
+    return nil, error_msg
+  end
   local payload_data = file_data
   if not from_allocated_data then
     payload_data = normalize_payload_size(file_data, sectors)
@@ -136,8 +144,12 @@ function M.pack_single_entry(entry)
     file_type,
     word_le(start),
     word_le(length),
-    word_le(sectors),
+    string.char(0, sectors),
   })
+  if #header15 ~= 15 then
+    local error_msg = "invalid Hobeta header size while packing entry"
+    return nil, error_msg
+  end
   local checksum = calc_checksum(header15)
   local packed = header15 .. word_le(checksum) .. payload_data
   return packed

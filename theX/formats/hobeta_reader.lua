@@ -28,6 +28,18 @@ local function calc_checksum(header15)
   return (105 + 257 * sum) % 65536
 end
 
+local function parse_sector_count(raw_data)
+  local byte14 = string.byte(raw_data, 14) or 0
+  local byte15 = string.byte(raw_data, 15) or 0
+  if byte14 == 0 then
+    return byte15
+  end
+  if byte15 == 0 then
+    return byte14
+  end
+  return byte15
+end
+
 local function trim_zero_space(bytes)
   local last = #bytes
   while last > 0 do
@@ -41,7 +53,7 @@ local function trim_zero_space(bytes)
   if last <= 0 then
     return ""
   end
-  return bytes:sub(1, last)
+  return string.sub(bytes, 1, last)
 end
 
 local function decode_cp866(bytes)
@@ -100,7 +112,7 @@ function M.read_bytes(raw_data, fallback_pc_name)
     return nil, error_msg
   end
 
-  local header15 = raw_data:sub(1, 15)
+  local header15 = string.sub(raw_data, 1, 15)
   local stored_checksum = parse_le16(raw_data, 16)
   local calculated_checksum = calc_checksum(header15)
   if stored_checksum ~= calculated_checksum then
@@ -108,25 +120,25 @@ function M.read_bytes(raw_data, fallback_pc_name)
     return nil, error_msg
   end
 
-  local trdos_name_raw = raw_data:sub(1, 8)
-  local trdos_type_raw = raw_data:sub(9, 9)
+  local trdos_name_raw = string.sub(raw_data, 1, 8)
+  local trdos_type_raw = string.sub(raw_data, 9, 9)
   local trdos_start = parse_le16(raw_data, 10)
   local logical_size = parse_le16(raw_data, 12)
-  local trdos_sectors = parse_le16(raw_data, 14)
+  local trdos_sectors = parse_sector_count(raw_data)
   if trdos_sectors < 0 then
     trdos_sectors = 0
   end
 
-  local payload = raw_data:sub(18)
+  local payload = string.sub(raw_data, 18)
   local max_payload_size = trdos_sectors * 256
   if max_payload_size > 0 and #payload > max_payload_size then
-    payload = payload:sub(1, max_payload_size)
+    payload = string.sub(payload, 1, max_payload_size)
   end
 
   if logical_size <= 0 or logical_size > #payload then
     logical_size = #payload
   end
-  local logical_data = payload:sub(1, logical_size)
+  local logical_data = string.sub(payload, 1, logical_size)
 
   local trdos_name = decode_cp866(trdos_name_raw)
   if trdos_name == "" then
@@ -137,7 +149,7 @@ function M.read_bytes(raw_data, fallback_pc_name)
   if trdos_type == "" then
     trdos_type = "C"
   end
-  trdos_type = trdos_type:sub(1, 1)
+  trdos_type = string.sub(trdos_type, 1, 1)
 
   local display_name, display_extension = ensure_display_name(trdos_name, trdos_type)
   local pc_name = fallback_pc_name

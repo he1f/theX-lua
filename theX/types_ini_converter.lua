@@ -83,8 +83,8 @@ end
 
 local function strip_quotes(value)
   local v = trim(value)
-  if #v >= 2 and v:sub(1, 1) == "'" and v:sub(-1) == "'" then
-    return v:sub(2, -2)
+  if #v >= 2 and string.sub(v, 1, 1) == "'" and string.sub(v, -1) == "'" then
+    return string.sub(v, 2, -2)
   end
   return v
 end
@@ -110,16 +110,16 @@ local function parse_number(raw_value)
     return nil
   end
 
-  if value:sub(1, 2):lower() == "0x" then
-    return tonumber(value:sub(3), 16)
+  if string.sub(value, 1, 2):lower() == "0x" then
+    return tonumber(string.sub(value, 3), 16)
   end
 
-  if value:sub(1, 1) == "#" then
-    return tonumber(value:sub(2), 16)
+  if string.sub(value, 1, 1) == "#" then
+    return tonumber(string.sub(value, 2), 16)
   end
 
-  if value:sub(1, 1) == "'" and value:sub(-1) == "'" and #value >= 3 then
-    return parse_quoted_number(value:sub(2, -2))
+  if string.sub(value, 1, 1) == "'" and string.sub(value, -1) == "'" and #value >= 3 then
+    return parse_quoted_number(string.sub(value, 2, -2))
   end
 
   return tonumber(value, 10)
@@ -142,8 +142,8 @@ local function parse_type_like(raw_value)
     return nil
   end
 
-  if value:sub(1, 1) == "'" and value:sub(-1) == "'" and #value >= 3 then
-    local inner = value:sub(2, -2)
+  if string.sub(value, 1, 1) == "'" and string.sub(value, -1) == "'" and #value >= 3 then
+    local inner = string.sub(value, 2, -2)
     if #inner == 1 then
       return inner
     end
@@ -168,25 +168,25 @@ local function tokenize_signature(raw_value)
   local i = 1
 
   while i <= len do
-    while i <= len and value:sub(i, i):match("%s") do
+    while i <= len and string.sub(value, i, i):match("%s") do
       i = i + 1
     end
     if i > len then
       break
     end
 
-    local ch = value:sub(i, i)
+    local ch = string.sub(value, i, i)
     if ch == "'" then
       local closing = value:find("'", i + 1, true)
       if closing then
-        local inner = value:sub(i + 1, closing - 1)
+        local inner = string.sub(value, i + 1, closing - 1)
         tokens[#tokens + 1] = { text = inner, quoted = true }
         i = closing + 1
-        while i <= len and value:sub(i, i) == "'" do
+        while i <= len and string.sub(value, i, i) == "'" do
           i = i + 1
         end
       else
-        local inner = value:sub(i + 1)
+        local inner = string.sub(value, i + 1)
         if inner ~= "" then
           tokens[#tokens + 1] = { text = inner, quoted = true }
         end
@@ -194,10 +194,10 @@ local function tokenize_signature(raw_value)
       end
     else
       local j = i
-      while j <= len and not value:sub(j, j):match("%s") do
+      while j <= len and not string.sub(value, j, j):match("%s") do
         j = j + 1
       end
-      local token = value:sub(i, j - 1)
+      local token = string.sub(value, i, j - 1)
       if token ~= "" then
         tokens[#tokens + 1] = { text = token, quoted = false }
       end

@@ -40,7 +40,7 @@ end
 
 local function normalize_name_bytes(entry)
   if type(entry.trdos_name_raw) == "string" and #entry.trdos_name_raw >= 8 then
-    return entry.trdos_name_raw:sub(1, 8)
+    return string.sub(entry.trdos_name_raw, 1, 8)
   end
 
   local source = entry.trdos_name or entry.name or ""
@@ -51,16 +51,16 @@ local function normalize_name_bytes(entry)
   if #source < 8 then
     source = source .. string.rep(" ", 8 - #source)
   end
-  return source:sub(1, 8)
+  return string.sub(source, 1, 8)
 end
 
 local function normalize_type_byte(entry)
   if type(entry.trdos_type_raw) == "string" and #entry.trdos_type_raw >= 1 then
-    return entry.trdos_type_raw:sub(1, 1)
+    return string.sub(entry.trdos_type_raw, 1, 1)
   end
   local source = entry.trdos_type
   if type(source) == "string" and source ~= "" then
-    return source:sub(1, 1)
+    return string.sub(source, 1, 1)
   end
   return "B"
 end
@@ -112,7 +112,7 @@ end
 local function pad_to_sectors(data, sectors)
   local target_len = sectors * SECTOR_SIZE
   if #data >= target_len then
-    return data:sub(1, target_len)
+    return string.sub(data, 1, target_len)
   end
   return data .. string.rep("\0", target_len - #data)
 end

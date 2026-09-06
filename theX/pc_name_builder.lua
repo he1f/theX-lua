@@ -68,13 +68,13 @@ end
 local function sanitize_special_char(value)
   local special_char = "$"
   if type(value) == "string" and value ~= "" then
-    special_char = value:sub(1, 1)
+    special_char = string.sub(value, 1, 1)
   end
   special_char = replace_invalid_chars(special_char)
   if special_char == "" then
     special_char = "$"
   end
-  return special_char:sub(1, 1)
+  return string.sub(special_char, 1, 1)
 end
 
 local function split_base_ext(filename)

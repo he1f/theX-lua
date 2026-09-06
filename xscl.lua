@@ -15,30 +15,30 @@ local function split_cli_args(text)
   local i = 1
   local len = #text
   while i <= len do
-    while i <= len and text:sub(i, i):match("%s") do
+    while i <= len and string.sub(text, i, i):match("%s") do
       i = i + 1
     end
     if i > len then
       break
     end
-    if text:sub(i, i) == "\"" then
+    if string.sub(text, i, i) == "\"" then
       local j = i + 1
-      while j <= len and text:sub(j, j) ~= "\"" do
+      while j <= len and string.sub(text, j, j) ~= "\"" do
         j = j + 1
       end
       if j <= len then
-        args[#args + 1] = text:sub(i + 1, j - 1)
+        args[#args + 1] = string.sub(text, i + 1, j - 1)
         i = j + 1
       else
-        args[#args + 1] = text:sub(i + 1)
+        args[#args + 1] = string.sub(text, i + 1)
         break
       end
     else
       local j = i
-      while j <= len and not text:sub(j, j):match("%s") do
+      while j <= len and not string.sub(text, j, j):match("%s") do
         j = j + 1
       end
-      args[#args + 1] = text:sub(i, j - 1)
+      args[#args + 1] = string.sub(text, i, j - 1)
       i = j
     end
   end

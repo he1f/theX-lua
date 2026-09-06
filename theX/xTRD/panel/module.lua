@@ -1,5 +1,6 @@
 local F = far.Flags
 local config = require("theX.xTRD.config")
+local ok_xscl_config, xscl_config = pcall(require, "theX.xSCL.config")
 local i18n = require("theX.xTRD.i18n")
 local archive = require("theX.xTRD.core.archive")
 local factory = require("theX.xTRD.panel.factory")
@@ -13,6 +14,8 @@ local hobeta_reader = require("theX.formats.hobeta_reader")
 local scl_reader = require("theX.formats.scl_reader")
 local file_info_dialog = require("theX.file_info_dialog")
 local transfer_cache = require("theX.panel_transfer_cache")
+local ok_xlook, xlook_module = pcall(require, "theX.xLook.xlook")
+local xlook = ok_xlook and type(xlook_module) == "table" and xlook_module or nil
 
 local M = {}
 local C0_PAD_CHAR = "\194\160"
@@ -26,6 +29,7 @@ local Sett = mf
 local panel_settings = nil
 local last_known_host_file = nil
 local last_transfer_target_object = nil
+local xscl_panel_module_cache = nil
 
 local function read_far_lang_config()
   local get_config = nil
@@ -88,6 +92,102 @@ local function guid_as_key(value)
   end
   return text
 end
+local function load_xscl_panel_module()
+  if type(xscl_panel_module_cache) == "table" then
+    return xscl_panel_module_cache
+  end
+  local ok_module, loaded_module = pcall(require, "theX.xSCL.panel.module")
+  if ok_module and type(loaded_module) == "table" then
+    xscl_panel_module_cache = loaded_module
+    return loaded_module
+  end
+  return nil
+end
+
+local function looks_like_xscl_archive_object(value)
+  return type(value) == "table"
+    and type(value.Entries) == "table"
+    and type(value.IndexByName) == "table"
+end
+
+local function call_xscl_putfiles_from_cache(passive_panel_info, move_requested)
+  local xscl_module = load_xscl_panel_module()
+  if type(xscl_module) ~= "table" or type(xscl_module.PutFiles) ~= "function" then
+    return nil, "xscl PutFiles unavailable"
+  end
+
+  local function panel_info_candidates()
+    local out = {}
+    if type(passive_panel_info) == "table" then
+      out[#out + 1] = passive_panel_info
+    end
+    local get_panel_info = type(panel) == "table" and panel.GetPanelInfo or nil
+    if type(get_panel_info) == "function" then
+      local ok_passive, passive_info = pcall(get_panel_info, nil, 0)
+      if ok_passive and type(passive_info) == "table" then
+        out[#out + 1] = passive_info
+      end
+      local ok_active, active_info = pcall(get_panel_info, nil, 1)
+      if ok_active and type(active_info) == "table" then
+        out[#out + 1] = active_info
+      end
+    end
+    return out
+  end
+
+  local function is_xscl_panel_info(pinfo)
+    if type(pinfo) ~= "table" then
+      return false
+    end
+    local owner_guid = pinfo.OwnerGuid
+      or pinfo.OwnerGUID
+      or pinfo.PluginId
+      or pinfo.PluginID
+      or pinfo.PluginGuid
+      or pinfo.PluginGUID
+    local owner_key = guid_as_key(owner_guid)
+    local xscl_key = guid_as_key(ok_xscl_config and type(xscl_config) == "table" and xscl_config.panel_module_guid or nil)
+    if owner_key ~= nil and xscl_key ~= nil and owner_key == xscl_key then
+      return true
+    end
+    local panel_format = type(pinfo.Format) == "string" and pinfo.Format:lower() or ""
+    if panel_format:find("tr-dos scl", 1, true) ~= nil then
+      return true
+    end
+    return false
+  end
+
+  local target_object = nil
+  local target_handle = nil
+  local candidates = panel_info_candidates()
+  for i = 1, #candidates do
+    local pinfo = candidates[i]
+    if is_xscl_panel_info(pinfo) then
+      local candidate_object = pinfo.PluginObject
+      if looks_like_xscl_archive_object(candidate_object) then
+        target_object = candidate_object
+        target_handle = pinfo.PanelHandle or pinfo.Handle
+        break
+      end
+    end
+  end
+  if type(target_object) ~= "table" and type(xscl_module.GetTransferTargetObject) == "function" then
+    local ok_target, fallback_target_object = pcall(xscl_module.GetTransferTargetObject)
+    if ok_target and looks_like_xscl_archive_object(fallback_target_object) then
+      target_object = fallback_target_object
+      target_handle = nil
+    end
+  end
+
+  if type(target_object) ~= "table" then
+    return nil, "xscl target object not resolved"
+  end
+  local ok_call, put_result = pcall(xscl_module.PutFiles, target_object, target_handle, nil, move_requested == true, nil, nil)
+  if not ok_call then
+    return nil, tostring(put_result)
+  end
+  return tonumber(put_result) == 1, tostring(put_result)
+end
 
 local function is_xtrd_panel_info(panel_info)
   if type(panel_info) ~= "table" then
@@ -114,6 +214,44 @@ local function is_xtrd_panel_info(panel_info)
     and type(plugin_object.IndexByName) == "table"
     and type(plugin_object.Meta) == "table"
     and plugin_object.CurrentDirIndex ~= nil
+end
+
+local function guid_equals(left_guid, right_guid)
+  if left_guid ~= nil and right_guid ~= nil and left_guid == right_guid then
+    return true
+  end
+  local left_key = guid_as_key(left_guid)
+  local right_key = guid_as_key(right_guid)
+  if left_key == nil or right_key == nil then
+    return false
+  end
+  return left_key == right_key
+end
+
+local function resolve_panel_owner_kind(panel_info)
+  if type(panel_info) ~= "table" then
+    return nil
+  end
+  local owner_guid = panel_info.OwnerGuid
+    or panel_info.OwnerGUID
+    or panel_info.PluginId
+    or panel_info.PluginID
+    or panel_info.PluginGuid
+    or panel_info.PluginGUID
+  if guid_equals(owner_guid, config.panel_module_guid) then
+    return "xtrd"
+  end
+  if ok_xscl_config and type(xscl_config) == "table" and guid_equals(owner_guid, xscl_config.panel_module_guid) then
+    return "xscl"
+  end
+  local panel_format = type(panel_info.Format) == "string" and panel_info.Format:lower() or ""
+  if panel_format:find("tr-dos trd", 1, true) ~= nil then
+    return "xtrd"
+  end
+  if panel_format:find("tr-dos scl", 1, true) ~= nil then
+    return "xscl"
+  end
+  return nil
 end
 
 local function resolve_ui_lang()
@@ -253,7 +391,7 @@ local function format_dirsys_value(meta)
   end
   local version = type(dirsys.version) == "string" and dirsys.version or ""
   if version:match("^%d%d%d$") then
-    version = version:sub(1, 1) .. "." .. version:sub(2, 3)
+    version = string.sub(version, 1, 1) .. "." .. string.sub(version, 2, 3)
   end
   if version == "" then
     return "DirSys"
@@ -526,8 +664,8 @@ local function split_name_and_ext(file_name, ext_hint)
 
   if type(ext_hint) == "string" and ext_hint ~= "" then
     local ext_len = #ext_hint
-    if ext_len > 0 and #file_name > ext_len and file_name:sub(-ext_len) == ext_hint then
-      local base_hint = file_name:sub(1, #file_name - ext_len):gsub("%.+$", "")
+    if ext_len > 0 and #file_name > ext_len and string.sub(file_name, -ext_len) == ext_hint then
+      local base_hint = string.sub(file_name, 1, #file_name - ext_len):gsub("%.+$", "")
       if base_hint ~= "" then
         return base_hint, ext_hint
       end
@@ -540,7 +678,7 @@ local function split_name_and_ext(file_name, ext_hint)
 
   local dot_pos = nil
   for i = #file_name, 2, -1 do
-    if file_name:sub(i, i) == "." then
+    if string.sub(file_name, i, i) == "." then
       dot_pos = i
       break
     end
@@ -549,7 +687,7 @@ local function split_name_and_ext(file_name, ext_hint)
   if not dot_pos or dot_pos >= #file_name then
     return file_name, ""
   end
-  return file_name:sub(1, dot_pos - 1), file_name:sub(dot_pos)
+  return string.sub(file_name, 1, dot_pos - 1), string.sub(file_name, dot_pos)
 end
 
 local function find_in_array(line, target)
@@ -610,7 +748,7 @@ local function align_c0_extension(value, column_width, ext_hint)
     return value
   end
   local name_part, ext_part = split_name_and_ext(value, ext_hint)
-  if ext_part ~= "" and ext_part:sub(1, 1) == "." then
+  if ext_part ~= "" and string.sub(ext_part, 1, 1) == "." then
     name_part = name_part:gsub("%.+$", "")
   end
   if ext_part == "" then
@@ -797,6 +935,19 @@ local function resolve_destination_out_dir(dest_path)
   return out_dir
 end
 
+local function looks_like_far_temp_transfer_path(dest_path)
+  local normalized_path = resolve_destination_out_dir(dest_path)
+  if type(normalized_path) ~= "string" or normalized_path == "" then
+    return false
+  end
+  local lowered = normalized_path:gsub("/", "\\"):lower()
+  local file_name = lowered:match("([^\\]+)$") or ""
+  if file_name == "" then
+    return false
+  end
+  return file_name:match("^far[%w_%-%$]+%.tmp$") ~= nil
+end
+
 local function trim_spaces(value)
   local text = value
   if type(text) ~= "string" then
@@ -854,7 +1005,7 @@ local function file_name_parts(file_name)
   local name_only = file_name:match("([^\\\\/]+)$") or file_name
   local dot_pos = nil
   for i = #name_only, 1, -1 do
-    if name_only:sub(i, i) == "." then
+    if string.sub(name_only, i, i) == "." then
       dot_pos = i
       break
     end
@@ -862,7 +1013,7 @@ local function file_name_parts(file_name)
   if not dot_pos or dot_pos <= 1 or dot_pos >= #name_only then
     return name_only, ""
   end
-  return name_only:sub(1, dot_pos - 1), ascii_lower(name_only:sub(dot_pos + 1))
+  return string.sub(name_only, 1, dot_pos - 1), ascii_lower(string.sub(name_only, dot_pos + 1))
 end
 
 local function is_absolute_windows_path(path_value)
@@ -946,7 +1097,7 @@ local function detect_trdos_type(extension)
     return ascii_upper_first(dollar_type)
   end
   if #ext >= 1 then
-    return ascii_upper_first(ext:sub(1, 1))
+    return ascii_upper_first(string.sub(ext, 1, 1))
   end
   return "C"
 end
@@ -958,7 +1109,7 @@ local function build_chunk_trdos_name(base_name, chunk_index, total_chunks)
   end
   local suffix = tostring(chunk_index)
   if #suffix >= 8 then
-    suffix = suffix:sub(-7)
+    suffix = string.sub(suffix, -7)
   end
   local prefix_limit = 8 - #suffix
   if prefix_limit < 1 then
@@ -966,7 +1117,7 @@ local function build_chunk_trdos_name(base_name, chunk_index, total_chunks)
   end
   local prefix = normalized_base
   if #prefix > prefix_limit then
-    prefix = prefix:sub(1, prefix_limit)
+    prefix = string.sub(prefix, 1, prefix_limit)
   end
   if prefix == "" then
     prefix = string.rep("R", prefix_limit)
@@ -1014,10 +1165,47 @@ local function normalize_import_entry(entry)
   if type(payload) ~= "string" then
     payload = ""
   end
+
+  local has_name_raw = type(entry.trdos_name_raw) == "string" and entry.trdos_name_raw ~= ""
+  local has_type_raw = type(entry.trdos_type_raw) == "string" and entry.trdos_type_raw ~= ""
+
+  local normalized_name = nil
+  if type(entry.trdos_name) == "string" and entry.trdos_name ~= "" then
+    normalized_name = entry.trdos_name
+  elseif has_name_raw then
+    normalized_name = entry.trdos_name_raw
+  else
+    normalized_name = entry.name or entry.pc_name or "raw"
+  end
+
+  local normalized_type = nil
+  if type(entry.trdos_type) == "string" and entry.trdos_type ~= "" then
+    normalized_type = entry.trdos_type
+  elseif has_type_raw then
+    normalized_type = entry.trdos_type_raw
+  else
+    normalized_type = "C"
+  end
+
+  if has_name_raw then
+    normalized_name = string.sub(normalized_name or "", 1, 8)
+    if normalized_name == "" then
+      normalized_name = string.sub(entry.trdos_name_raw, 1, 8)
+    end
+  else
+    normalized_name = trim_to_trdos_name(normalized_name)
+  end
+  normalized_type = string.sub(type(normalized_type) == "string" and normalized_type or "C", 1, 1)
+  if normalized_type == "" then
+    normalized_type = "C"
+  end
   return {
-    trdos_name = trim_to_trdos_name(entry.trdos_name or entry.name or entry.pc_name or "raw"),
-    trdos_type = ascii_upper_first(entry.trdos_type or entry.trdos_type_raw or "C"),
+    trdos_name = normalized_name,
+    trdos_name_raw = has_name_raw and string.sub(entry.trdos_name_raw, 1, 8) or nil,
+    trdos_type = normalized_type,
+    trdos_type_raw = has_type_raw and string.sub(entry.trdos_type_raw, 1, 1) or nil,
     trdos_start = math.floor(tonumber(entry.trdos_start) or 0),
+    trdos_sectors = math.floor(tonumber(entry.trdos_sectors) or 0),
     raw_file = payload,
     size = math.floor(tonumber(entry.size) or #payload),
     trdos_params = {
@@ -1404,7 +1592,7 @@ local function normalize_trdos_type(value)
   if trimmed == "" then
     return ""
   end
-  local first_char = trimmed:sub(1, 1)
+  local first_char = string.sub(trimmed, 1, 1)
   local byte_value = string.byte(first_char) or 0
   if byte_value >= 97 and byte_value <= 122 then
     return string.char(byte_value - 32)
@@ -1552,14 +1740,45 @@ local function resolve_entry_open_data(entry)
   return ""
 end
 
-local function build_temp_file_path(entry_name)
-  local temp_root = win.GetEnv("TEMP") or win.GetEnv("TMP") or "."
-  local safe_name = (entry_name or "entry.bin"):gsub('[<>:"/\\|%?%*]', "_")
+local function resolve_entry_hobeta_data_for_xlook(entry)
+  if type(entry) ~= "table" then
+    return ""
+  end
+  local packed_hobeta = hobeta_writer.pack_single_entry(entry)
+  if type(packed_hobeta) == "string" and packed_hobeta ~= "" then
+    return packed_hobeta
+  end
+  if type(entry.hobeta) == "string" and entry.hobeta ~= "" then
+    return entry.hobeta
+  end
+  return resolve_entry_open_data(entry)
+end
+
+local function sanitize_temp_name(value)
+  local safe_name = type(value) == "string" and value or ""
+  safe_name = safe_name:gsub('[<>:"/\\|%?%*]', "_")
+  safe_name = safe_name:gsub("%s+", "_")
+  safe_name = safe_name:gsub("[%. ]+$", "")
   if safe_name == "" then
     safe_name = "entry.bin"
   end
+  return safe_name
+end
+
+local function build_temp_file_path(entry)
+  local temp_root = win.GetEnv("TEMP") or win.GetEnv("TMP") or "."
   local unique = ("%d_%06d"):format(os.time(), math.random(0, 999999))
-  return path_util.join(temp_root, "xTRD_" .. unique .. "_" .. safe_name)
+  local pc_name = type(entry) == "table" and entry.pc_name or nil
+  local safe_name = sanitize_temp_name(pc_name)
+  return path_util.join(temp_root, "xtrd_" .. unique .. "." .. safe_name)
+end
+
+local function should_open_with_xlook(entry)
+  local pc_name = type(entry) == "table" and entry.pc_name or nil
+  if type(pc_name) ~= "string" or pc_name == "" then
+    return false
+  end
+  return pc_name:match("%.[!$][%w]%d?$") ~= nil
 end
 
 local function open_in_viewer(temp_file, title)
@@ -1587,13 +1806,23 @@ local function open_entry_from_temp(object, handle, mode)
   if type(entry) ~= "table" then
     return nil
   end
+  local use_xlook = should_open_with_xlook(entry)
+    and type(xlook) == "table"
+    and type(xlook.run) == "function"
 
-  local temp_file = build_temp_file_path(entry.name)
-  local data = resolve_entry_open_data(entry)
+  local temp_file = build_temp_file_path(entry)
+  local data = use_xlook and resolve_entry_hobeta_data_for_xlook(entry) or resolve_entry_open_data(entry)
   local ok_write = raw_writer.write_file(temp_file, data)
   if not ok_write then
     far.Message(tr_message("failed_create_temp_file"), config.name, nil, "w")
     return 1
+  end
+
+  if use_xlook then
+    local ok_run, handled = pcall(xlook.run, temp_file, { quiet = true, require_output = true })
+    if ok_run and handled ~= false then
+      return 1
+    end
   end
 
   if mode == "view" then
@@ -1973,6 +2202,26 @@ local function collect_export_entries(object, panel_items)
   return out_entries
 end
 
+local function export_entries_as_raw_files(entries, out_dir)
+  if type(entries) ~= "table" or #entries == 0 then
+    return true
+  end
+  for i = 1, #entries do
+    local entry = entries[i]
+    local file_name = type(entry) == "table" and (entry.pc_name or entry.name) or nil
+    if type(file_name) ~= "string" or file_name == "" then
+      file_name = "file_" .. tostring(i)
+    end
+    local target_path = path_util.join(out_dir, file_name)
+    local data = resolve_entry_open_data(entry)
+    local ok_write, write_error = raw_writer.write_file(target_path, data)
+    if not ok_write then
+      return nil, write_error or target_path
+    end
+  end
+  return true
+end
+
 function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
   local items = resolve_panel_items_for_transfer(handle, panel_items)
   archive.track_selection(object, items)
@@ -1984,6 +2233,40 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
 
   local move_requested = is_move_requested(move)
   local default_out_dir = resolve_destination_out_dir(dest_path)
+  local passive_panel_info = call_panel_method(panel.GetPanelInfo, nil, 0)
+  local passive_owner_kind = resolve_panel_owner_kind(passive_panel_info)
+  local destination_looks_like_far_temp = looks_like_far_temp_transfer_path(dest_path)
+
+  if passive_owner_kind == "xscl" or (destination_looks_like_far_temp and passive_owner_kind ~= "xtrd") then
+    transfer_cache.store({
+      target_kind = "xscl",
+      source_kind = "xtrd",
+      move_requested = move_requested,
+      entries = entries,
+    })
+    local put_ok, put_result = call_xscl_putfiles_from_cache(passive_panel_info, move_requested)
+    if put_ok == true then
+      clear_object_selection_state(object)
+      clear_panel_selection_flags(handle, items)
+      call_panel_method(panel.UpdatePanel, handle)
+      call_panel_method(panel.RedrawPanel, handle)
+      return true
+    end
+    if default_out_dir == "" then
+      far.Message(tr_message("destination_path_empty"), config.name, nil, "w")
+      return false
+    end
+    local handoff_ok, handoff_error = export_entries_as_raw_files(entries, default_out_dir)
+    if not handoff_ok then
+      far.Message(tr_message("export_failed") .. "\n" .. tostring(handoff_error or default_out_dir), config.name, nil, "w")
+      return false
+    end
+    clear_object_selection_state(object)
+    clear_panel_selection_flags(handle, items)
+    call_panel_method(panel.UpdatePanel, handle)
+    call_panel_method(panel.RedrawPanel, handle)
+    return true
+  end
   local options = move_requested and ask_move_options(entries, default_out_dir) or ask_copy_options(entries, default_out_dir)
   if options == false then
     return false

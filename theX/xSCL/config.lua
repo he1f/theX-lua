@@ -1,8 +1,7 @@
--- %FARPROFILE%\Macros\scripts\theX\xSCL\config.lua
 local M = {}
 
 M.name = "xSCL"
-M.panel_title = "xSCL panel"
+M.panel_title = "SCL eXplorer"
 M.command_prefix = "xSCL"
 M.types_registry_path = "types.lua"
 

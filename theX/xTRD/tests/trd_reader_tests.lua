@@ -40,7 +40,7 @@ end
 local function right_pad(text_value, target_length)
   local out = text_value or ""
   if #out > target_length then
-    return out:sub(1, target_length)
+    return string.sub(out, 1, target_length)
   end
   if #out < target_length then
     out = out .. string.rep(" ", target_length - #out)
@@ -168,7 +168,7 @@ local function write_entry_header(path_value, slot_index, spec)
   local first_sector = tonumber(spec.first_sector) or 0
   local first_track = tonumber(spec.first_track) or 1
   local payload = type(spec.payload) == "string" and spec.payload or ""
-  local file_type = type(spec.file_type) == "string" and spec.file_type ~= "" and spec.file_type:sub(1, 1) or "C"
+  local file_type = type(spec.file_type) == "string" and spec.file_type ~= "" and string.sub(spec.file_type, 1, 1) or "C"
   local sectors = tonumber(spec.sectors) or 1
   local start_value = tonumber(spec.start_value) or 0
   local size_value = tonumber(spec.size_value) or #payload

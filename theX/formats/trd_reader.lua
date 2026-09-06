@@ -335,7 +335,7 @@ local function encode_trdos_file_name(value)
   end
   local dot_pos = trimmed:find("%.", 1)
   if type(dot_pos) == "number" and dot_pos > 1 then
-    trimmed = trimmed:sub(1, dot_pos - 1)
+    trimmed = string.sub(trimmed, 1, dot_pos - 1)
   end
   trimmed = trim_spaces(trimmed)
   if trimmed == "" then
@@ -1248,13 +1248,32 @@ function M.add_entries(file_path, parent_dir_index, entries_to_add)
       return nil, "xTRD: invalid imported entry"
     end
 
-    local trdos_name_raw, name_error = encode_trdos_file_name(entry.trdos_name or entry.name or entry.pc_name or "")
-    if not trdos_name_raw then
-      return nil, name_error
+    local trdos_name_raw = nil
+    if type(entry.trdos_name_raw) == "string" and entry.trdos_name_raw ~= "" then
+      trdos_name_raw = string.sub(entry.trdos_name_raw, 1, 8)
+      if #trdos_name_raw < 8 then
+        trdos_name_raw = trdos_name_raw .. string.rep(" ", 8 - #trdos_name_raw)
+      end
+    else
+      local encoded_name, name_error = encode_trdos_file_name(entry.trdos_name or entry.name or entry.pc_name or "")
+      if not encoded_name then
+        return nil, name_error
+      end
+      trdos_name_raw = encoded_name
     end
-    local type_byte, type_error = encode_trdos_type_byte(entry.trdos_type or entry.trdos_type_raw or "C")
-    if not type_byte then
-      return nil, type_error
+
+    local type_byte = nil
+    if type(entry.trdos_type_raw) == "string" and entry.trdos_type_raw ~= "" then
+      type_byte = string.byte(entry.trdos_type_raw, 1)
+      if type(type_byte) ~= "number" or type_byte < 32 or type_byte > 255 then
+        return nil, "xTRD: invalid file type"
+      end
+    else
+      local encoded_type, type_error = encode_trdos_type_byte(entry.trdos_type or entry.trdos_type_raw or "C")
+      if not encoded_type then
+        return nil, type_error
+      end
+      type_byte = encoded_type
     end
     local start_word, start_error = normalize_start_address(entry.trdos_start or (type(entry.trdos_params) == "table" and entry.trdos_params.param1) or 0)
     if start_word == nil then

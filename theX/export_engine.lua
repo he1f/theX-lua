@@ -59,12 +59,12 @@ local function extract_hobeta_payload_from_packed(packed)
   end
 
   local payload_length = parse_le16(packed, 12)
-  local payload = packed:sub(18)
+  local payload = string.sub(packed, 18)
   if payload_length < 0 then
     payload_length = 0
   end
   if #payload > payload_length then
-    payload = payload:sub(1, payload_length)
+    payload = string.sub(payload, 1, payload_length)
   end
   return payload
 end

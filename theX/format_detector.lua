@@ -10,8 +10,8 @@ do
   if type(debug) == "table" and type(debug.getinfo) == "function" then
     local source_info = debug.getinfo(1, "S")
     local source = type(source_info) == "table" and source_info.source or nil
-    if type(source) == "string" and source:sub(1, 1) == "@" then
-      local module_path = source:sub(2)
+    if type(source) == "string" and string.sub(source, 1, 1) == "@" then
+      local module_path = string.sub(source, 2)
       module_dir_path = module_path:match("^(.*)[/\\][^/\\]+$")
     end
   end

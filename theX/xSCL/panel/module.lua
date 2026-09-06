@@ -17,6 +17,8 @@ local format_detector = ok_thex and thex_module and thex_module.format_detector 
 local export_dialog = ok_thex and thex_module and thex_module.export_dialog or nil
 local export_engine = ok_thex and thex_module and thex_module.export_engine or nil
 local file_info_dialog = ok_thex and thex_module and thex_module.file_info_dialog or nil
+local ok_xlook, xlook_module = pcall(require, "theX.xLook.xlook")
+local xlook = ok_xlook and type(xlook_module) == "table" and xlook_module or nil
 if type(format_detector) ~= "table" then
   local ok_format_detector, loaded_format_detector = pcall(require, "theX.format_detector")
   if ok_format_detector and type(loaded_format_detector) == "table" then
@@ -71,8 +73,20 @@ local apply_imported_entries_to_object = nil
 local open_panel_objects = setmetatable({}, { __mode = "k" })
 local types_registry_cache = nil
 local xtrd_panel_module_cache = nil
+local last_transfer_target_object = nil
 local pending_transfer_intent_by_object = setmetatable({}, { __mode = "k" })
 local pending_transfer_intent_ttl_seconds = 5
+
+local function remember_transfer_target_object(object)
+  if type(object) ~= "table" then
+    return false
+  end
+  if type(object.Entries) ~= "table" or type(object.IndexByName) ~= "table" then
+    return false
+  end
+  last_transfer_target_object = object
+  return true
+end
 
 local function remember_transfer_intent(object, intent_kind)
   if type(object) ~= "table" then
@@ -505,12 +519,14 @@ function M.Open(open_from, guid, item)
   if open_from == F.OPEN_ANALYSE then
     local opened_object = factory.from_analyse_item(item)
     remember_open_panel_object(opened_object)
+    remember_transfer_target_object(opened_object)
     return opened_object
   end
 
   if open_from == F.OPEN_SHORTCUT and type(item) == "table" then
     local opened_object = factory.from_shortcut(item.ShortcutData)
     remember_open_panel_object(opened_object)
+    remember_transfer_target_object(opened_object)
     return opened_object
   end
 end
@@ -560,8 +576,8 @@ local function split_name_and_ext(file_name, ext_hint)
 
   if type(ext_hint) == "string" and ext_hint ~= "" then
     local ext_len = #ext_hint
-    if ext_len > 0 and #file_name > ext_len and file_name:sub(-ext_len) == ext_hint then
-      local base_hint = file_name:sub(1, #file_name - ext_len):gsub("%.+$", "")
+    if ext_len > 0 and #file_name > ext_len and string.sub(file_name, -ext_len) == ext_hint then
+      local base_hint = string.sub(file_name, 1, #file_name - ext_len):gsub("%.+$", "")
       if base_hint ~= "" then
         return base_hint, ext_hint
       end
@@ -574,7 +590,7 @@ local function split_name_and_ext(file_name, ext_hint)
 
   local dot_pos = nil
   for i = #file_name, 2, -1 do
-    if file_name:sub(i, i) == "." then
+    if string.sub(file_name, i, i) == "." then
       dot_pos = i
       break
     end
@@ -583,7 +599,7 @@ local function split_name_and_ext(file_name, ext_hint)
   if not dot_pos or dot_pos >= #file_name then
     return file_name, ""
   end
-  return file_name:sub(1, dot_pos - 1), file_name:sub(dot_pos)
+  return string.sub(file_name, 1, dot_pos - 1), string.sub(file_name, dot_pos)
 end
 
 local function call_panel_method(fn, ...)
@@ -860,7 +876,7 @@ local function align_c0_extension(value, column_width, ext_hint)
     return value
   end
   local name_part, ext_part = split_name_and_ext(value, ext_hint)
-  if ext_part ~= "" and ext_part:sub(1, 1) == "." then
+  if ext_part ~= "" and string.sub(ext_part, 1, 1) == "." then
     name_part = name_part:gsub("%.+$", "")
   end
   if ext_part == "" then
@@ -983,8 +999,8 @@ local function normalize_windows_path_for_compare(path_value)
     end
   end
   normalized = normalized:gsub("/", "\\"):lower()
-  if normalized:sub(-1) == "\\" then
-    normalized = normalized:sub(1, -2)
+  if string.sub(normalized, -1) == "\\" then
+    normalized = string.sub(normalized, 1, -2)
   end
   return normalized
 end
@@ -1207,7 +1223,7 @@ local function file_name_parts(file_name)
   local name_only = file_name:match("([^\\\\/]+)$") or file_name
   local dot_pos = nil
   for i = #name_only, 1, -1 do
-    if name_only:sub(i, i) == "." then
+    if string.sub(name_only, i, i) == "." then
       dot_pos = i
       break
     end
@@ -1215,8 +1231,8 @@ local function file_name_parts(file_name)
   if not dot_pos or dot_pos <= 1 or dot_pos >= #name_only then
     return name_only, ""
   end
-  local base_name = name_only:sub(1, dot_pos - 1)
-  local extension = name_only:sub(dot_pos + 1)
+  local base_name = string.sub(name_only, 1, dot_pos - 1)
+  local extension = string.sub(name_only, dot_pos + 1)
   return base_name, ascii_lower(extension)
 end
 
@@ -1297,7 +1313,7 @@ local function make_trdos_name_raw(name_value)
   if #clean < 8 then
     clean = clean .. string.rep(" ", 8 - #clean)
   end
-  return clean:sub(1, 8)
+  return string.sub(clean, 1, 8)
 end
 
 
@@ -1350,7 +1366,7 @@ local function build_imported_pc_name(entry, used_names)
   if type(special_char) ~= "string" or special_char == "" then
     special_char = "$"
   end
-  local candidate = base_name .. "." .. special_char:sub(1, 1) .. file_type
+  local candidate = base_name .. "." .. string.sub(special_char, 1, 1) .. file_type
   return make_unique_pc_name(candidate, used_names)
 end
 
@@ -1423,7 +1439,7 @@ local function ensure_entry_limits(entry)
 
   entry.trdos_start = math.floor(tonumber(entry.trdos_start) or 0)
   if type(entry.trdos_name_raw) == "string" and #entry.trdos_name_raw >= 8 then
-    entry.trdos_name_raw = entry.trdos_name_raw:sub(1, 8)
+    entry.trdos_name_raw = string.sub(entry.trdos_name_raw, 1, 8)
     if type(entry.trdos_name) ~= "string" or entry.trdos_name == "" then
       entry.trdos_name = trim_to_trdos_name(entry.pc_name or "raw")
     end
@@ -1433,13 +1449,13 @@ local function ensure_entry_limits(entry)
   end
   if type(entry.trdos_type_raw) ~= "string" or entry.trdos_type_raw == "" then
     local type_name = type(entry.trdos_type) == "string" and entry.trdos_type or "C"
-    entry.trdos_type_raw = type_name:sub(1, 1)
+    entry.trdos_type_raw = string.sub(type_name, 1, 1)
   end
   if type(entry.trdos_type) ~= "string" or entry.trdos_type == "" then
     entry.trdos_type = entry.trdos_type_raw
   end
-  entry.trdos_type = entry.trdos_type:sub(1, 1)
-  entry.trdos_type_raw = entry.trdos_type_raw:sub(1, 1)
+  entry.trdos_type = string.sub(entry.trdos_type, 1, 1)
+  entry.trdos_type_raw = string.sub(entry.trdos_type_raw, 1, 1)
 
   if type(entry.trdos_params) ~= "table" then
     entry.trdos_params = {}
@@ -1685,15 +1701,15 @@ local function import_entries_from_panel_object(source_object, panel_items)
       for entry_key, is_selected in pairs(selected_keys) do
         if is_selected == true and type(entry_key) == "string" then
           local source_entry = nil
-          if entry_key:sub(1, 3) == "id:" then
-            local entry_id = tonumber(entry_key:sub(4))
+          if string.sub(entry_key, 1, 3) == "id:" then
+            local entry_id = tonumber(string.sub(entry_key, 4))
             if type(entry_id) == "number" and entry_id >= 1 then
               source_entry = source_entries[math.floor(entry_id)]
             end
-          elseif entry_key:sub(1, 3) == "pc:" then
-            source_entry = source_index[entry_key:sub(4)]
-          elseif entry_key:sub(1, 5) == "name:" then
-            source_entry = source_index[entry_key:sub(6)]
+          elseif string.sub(entry_key, 1, 3) == "pc:" then
+            source_entry = source_index[string.sub(entry_key, 4)]
+          elseif string.sub(entry_key, 1, 5) == "name:" then
+            source_entry = source_index[string.sub(entry_key, 6)]
           end
           if type(source_entry) == "table" then
             ordered_entries[#ordered_entries + 1] = {
@@ -2387,6 +2403,7 @@ end
 
 function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
   remember_open_panel_object(object)
+  remember_transfer_target_object(object)
   pending_panel_transfer = nil
   local move_requested = is_move_requested(move)
   local intent_kind = consume_transfer_intent(object)
@@ -2543,6 +2560,7 @@ function M.PutFiles(object, handle, panel_items, move, src_path, op_mode)
   if type(object) ~= "table" then
     return 0
   end
+  remember_transfer_target_object(object)
   if type(pending_panel_transfer) == "table" and pending_panel_transfer.already_applied == true then
     pending_panel_transfer = nil
     return 1
@@ -2552,6 +2570,25 @@ function M.PutFiles(object, handle, panel_items, move, src_path, op_mode)
 
   local src_root = resolve_source_root(src_path)
   local imported_entries = {}
+  local cached_entries, cached_payload = nil, nil
+  if transfer_cache and transfer_cache.consume then
+    cached_entries, cached_payload = transfer_cache.consume("xscl")
+  end
+  if type(cached_entries) == "table"
+    and #cached_entries > 0
+    and type(cached_payload) == "table"
+    and cached_payload.source_kind == "xtrd"
+  then
+    for i = 1, #cached_entries do
+      local cloned = clone_entry(cached_entries[i])
+      if type(cloned) == "table" then
+        imported_entries[#imported_entries + 1] = cloned
+      end
+    end
+    if not move_requested and type(cached_payload) == "table" and cached_payload.move_requested == true then
+      move_requested = true
+    end
+  end
   local source_panel_object = find_source_panel_object(object)
   local source_handle_for_move = nil
   local pending_meta = {}
@@ -2754,14 +2791,31 @@ local function get_current_entry(object)
   return object.IndexByName[file_name]
 end
 
-local function build_temp_file_path(entry_name)
-  local temp_root = win.GetEnv("TEMP") or win.GetEnv("TMP") or "."
-  local safe_name = (entry_name or "entry.bin"):gsub('[<>:"/\\|%?%*]', "_")
+local function sanitize_temp_name(value)
+  local safe_name = type(value) == "string" and value or ""
+  safe_name = safe_name:gsub('[<>:"/\\|%?%*]', "_")
+  safe_name = safe_name:gsub("%s+", "_")
+  safe_name = safe_name:gsub("[%. ]+$", "")
   if safe_name == "" then
     safe_name = "entry.bin"
   end
+  return safe_name
+end
+
+local function build_temp_file_path(entry)
+  local temp_root = win.GetEnv("TEMP") or win.GetEnv("TMP") or "."
   local unique = ("%d_%06d"):format(os.time(), math.random(0, 999999))
-  return path_util.join(temp_root, "xSCL_" .. unique .. "_" .. safe_name)
+  local pc_name = type(entry) == "table" and entry.pc_name or nil
+  local safe_name = sanitize_temp_name(pc_name)
+  return path_util.join(temp_root, "xscl_" .. unique .. "." .. safe_name)
+end
+
+local function should_open_with_xlook(entry)
+  local pc_name = type(entry) == "table" and entry.pc_name or nil
+  if type(pc_name) ~= "string" or pc_name == "" then
+    return false
+  end
+  return pc_name:match("%.[!$][%w]%d?$") ~= nil
 end
 
 local function open_in_viewer(temp_file, title)
@@ -2805,18 +2859,42 @@ local function resolve_entry_open_data(entry)
   return fallback_data
 end
 
+local function resolve_entry_hobeta_data_for_xlook(entry)
+  if type(entry) ~= "table" then
+    return ""
+  end
+  local packed_hobeta = hobeta_writer.pack_single_entry(entry)
+  if type(packed_hobeta) == "string" and packed_hobeta ~= "" then
+    return packed_hobeta
+  end
+  if type(entry.hobeta) == "string" and entry.hobeta ~= "" then
+    return entry.hobeta
+  end
+  return resolve_entry_open_data(entry)
+end
+
 local function open_entry_from_temp(object, mode)
   local entry = get_current_entry(object)
   if not entry then
     return nil
   end
+  local use_xlook = should_open_with_xlook(entry)
+    and type(xlook) == "table"
+    and type(xlook.run) == "function"
 
-  local temp_file = build_temp_file_path(entry.name)
-  local data = resolve_entry_open_data(entry)
+  local temp_file = build_temp_file_path(entry)
+  local data = use_xlook and resolve_entry_hobeta_data_for_xlook(entry) or resolve_entry_open_data(entry)
   local ok = raw_writer.write_file(temp_file, data)
   if not ok then
     far.Message(tr_message("failed_create_temp_file"), config.name, nil, "w")
     return 1
+  end
+
+  if use_xlook then
+    local ok_run, handled = pcall(xlook.run, temp_file, { quiet = true, require_output = true })
+    if ok_run and handled ~= false then
+      return 1
+    end
   end
 
   if mode == "view" then
@@ -2851,7 +2929,7 @@ local function normalize_trdos_type(value)
   if trimmed == "" then
     return ""
   end
-  local one_char = trimmed:sub(1, 1)
+  local one_char = string.sub(trimmed, 1, 1)
   local byte_value = string.byte(one_char) or 0
   if byte_value >= 97 and byte_value <= 122 then
     one_char = string.char(byte_value - 32)
@@ -3034,6 +3112,7 @@ local function edit_current_entry_info(object, handle)
   return 1
 end
 function M.ProcessPanelEvent(object, handle, event, param)
+  remember_transfer_target_object(object)
   if event == F.FE_REDRAW or event == F.FE_GOTFOCUS or event == F.FE_IDLE then
     sync_selection_order(object, handle)
   end
@@ -3126,6 +3205,9 @@ function M.ClosePanel(object, handle)
   call_panel_method(panel.SetFindList, handle, nil, empty_items)
   call_panel_method(panel.SetFindList, nil, 1, empty_items)
   if type(object) == "table" then
+    if last_transfer_target_object == object then
+      last_transfer_target_object = nil
+    end
     object.Entries = {}
     object.IndexByName = {}
     object.SelectionState = {
@@ -3141,6 +3223,16 @@ function M.ClosePanel(object, handle)
   local pinfo = call_panel_method(panel.GetPanelInfo, handle)
   update_settings_from_panel_info(pinfo, false)
   save_panel_settings()
+end
+
+function M.GetTransferTargetObject()
+  if type(last_transfer_target_object) == "table"
+    and type(last_transfer_target_object.Entries) == "table"
+    and type(last_transfer_target_object.IndexByName) == "table"
+  then
+    return last_transfer_target_object
+  end
+  return nil
 end
 
 return M
