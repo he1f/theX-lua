@@ -1,8 +1,8 @@
 local M = {}
 
 local locales = {
-  en = require("xscl.i18n.en"),
-  ru = require("xscl.i18n.ru"),
+  en = require("theX.xSCL.i18n.en"),
+  ru = require("theX.xSCL.i18n.ru"),
 }
 
 function M.get(lang)

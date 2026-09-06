@@ -7,8 +7,8 @@ end
 local script_dir = macro_file:match("^(.*[\\/])") or ""
 package.path = script_dir .. "?\\init.lua;" .. script_dir .. "?.lua;" .. package.path
 
-local xscl = require("xscl")
-local config = require("xscl.config")
+local xSCL = require("theX.xSCL")
+local config = require("theX.xSCL.config")
 
 local function split_cli_args(text)
   local args = {}
@@ -54,11 +54,12 @@ CommandLine {
     if cmd and cmd:lower() == "convert-types" then
       local args = split_cli_args(rest or "")
       if #args < 2 then
-        far.Message("Usage:\nxscl:convert-types \"<input TYPES.INI>\" \"<output types.lua>\"", "xSCL", nil, "w")
+        local usage_msg = "Usage:\n" .. tostring(config.command_prefix) .. ":convert-types \"<input TYPES.INI>\" \"<output types.lua>\""
+        far.Message(usage_msg, "xSCL", nil, "w")
         return
       end
 
-      local result, convert_error = xscl.types_ini_converter.convert_file(args[1], args[2])
+      local result, convert_error = xSCL.types_ini_converter.convert_file(args[1], args[2])
       if not result then
         far.Message(convert_error or "xSCL: conversion failed", "xSCL", nil, "w")
         return
@@ -67,9 +68,9 @@ CommandLine {
       far.Message("Converted formats: " .. tostring(result.formats_count) .. "\nSaved: " .. tostring(result.output_path), "xSCL", nil, "w")
       return
     end
-    local obj = xscl.panel_factory.from_path(text)
+    local obj = xSCL.panel_factory.from_path(text)
     if obj then
-      return xscl.panel_module, obj
+      return xSCL.panel_module, obj
     end
   end;
 }
@@ -81,11 +82,11 @@ MenuItem {
   guid = config.menu_item_guid;
   text = "xSCL";
   action = function()
-    local obj = xscl.panel_factory.from_active_panel()
+    local obj = xSCL.panel_factory.from_active_panel()
     if obj then
-      return xscl.panel_module, obj
+      return xSCL.panel_module, obj
     end
   end;
 }
 
-PanelModule(xscl.panel_module)
+PanelModule(xSCL.panel_module)

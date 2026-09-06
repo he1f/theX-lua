@@ -1,9 +1,9 @@
 local F = far.Flags
-local config = require("xscl.config")
-local i18n = require("xscl.i18n")
-local path_util = require("xscl.util.path")
-local archive = require("xscl.core.archive")
-local factory = require("xscl.panel.factory")
+local config = require("theX.xSCL.config")
+local i18n = require("theX.xSCL.i18n")
+local path_util = require("theX.xSCL.util.path")
+local archive = require("theX.xSCL.core.archive")
+local factory = require("theX.xSCL.panel.factory")
 local raw_writer = require("theX.formats.raw_writer")
 local hobeta_writer = require("theX.formats.hobeta_writer")
 local hobeta_reader = require("theX.formats.hobeta_reader")
@@ -48,7 +48,7 @@ local SCL_MAX_FILES = 255
 local SCL_MAX_SECTORS_PER_FILE = 255
 local SCL_SECTOR_SIZE = 256
 local PANEL_FORMAT = "TR-DOS SCL"
-local SETTINGS_KEY = "xscl"
+local SETTINGS_KEY = "xSCL"
 local SETTINGS_NAME = "PanelState"
 local Sett = mf
 local panel_settings = nil
@@ -62,18 +62,6 @@ local open_panel_objects = setmetatable({}, { __mode = "k" })
 local types_registry_cache = nil
 local pending_transfer_intent_by_object = setmetatable({}, { __mode = "k" })
 local pending_transfer_intent_ttl_seconds = 5
-local module_dir_path = nil
-
-do
-  if type(debug) == "table" and type(debug.getinfo) == "function" then
-    local source_info = debug.getinfo(1, "S")
-    local source = type(source_info) == "table" and source_info.source or nil
-    if type(source) == "string" and source:sub(1, 1) == "@" then
-      local module_path = source:sub(2)
-      module_dir_path = module_path:match("^(.*)[/\\][^/\\]+$")
-    end
-  end
-end
 
 local function remember_transfer_intent(object, intent_kind)
   if type(object) ~= "table" then
@@ -1335,33 +1323,7 @@ local function get_types_registry()
   if type(registry_path) ~= "string" or registry_path == "" then
     return nil
   end
-  local raw_registry_path = registry_path
-  local is_absolute = registry_path:match("^%a:[/\\]") ~= nil or registry_path:match("^[/\\][/\\]") ~= nil
-  if not is_absolute then
-    local config_dir = nil
-    if type(package.searchpath) == "function" then
-      local config_module_path = package.searchpath("xscl.config", package.path)
-      if type(config_module_path) == "string" and config_module_path ~= "" then
-        config_dir = config_module_path:match("^(.*)[/\\][^/\\]+$")
-      end
-    end
-    if (type(config_dir) ~= "string" or config_dir == "") and type(module_dir_path) == "string" then
-      config_dir = module_dir_path:match("^(.*)[/\\][^/\\]+$")
-    end
-    if type(config_dir) == "string" and config_dir ~= "" then
-      registry_path = path_util.join(config_dir, registry_path)
-    end
-  end
-  local loaded_registry, _ = format_detector.load_registry_file(registry_path)
-  if type(loaded_registry) ~= "table" and not is_absolute and type(module_dir_path) == "string" and module_dir_path ~= "" then
-    local module_based_path = path_util.join(module_dir_path, raw_registry_path)
-    if module_based_path ~= registry_path then
-      local retry_registry, _ = format_detector.load_registry_file(module_based_path)
-      if type(retry_registry) == "table" then
-        loaded_registry = retry_registry
-      end
-    end
-  end
+  local loaded_registry = format_detector.load_registry_file(registry_path)
   if type(loaded_registry) == "table" then
     types_registry_cache = loaded_registry
   end
@@ -2589,7 +2551,7 @@ local function build_temp_file_path(entry_name)
     safe_name = "entry.bin"
   end
   local unique = ("%d_%06d"):format(os.time(), math.random(0, 999999))
-  return path_util.join(temp_root, "xscl_" .. unique .. "_" .. safe_name)
+  return path_util.join(temp_root, "xSCL_" .. unique .. "_" .. safe_name)
 end
 
 local function open_in_viewer(temp_file, title)

@@ -16,7 +16,7 @@ local function sum_bytes_u32(buffer, start_pos, end_pos)
   end
   return sum
 end
-local config = require("xscl.config")
+local config = require("theX.xSCL.config")
 local hobeta_writer = require("theX.formats.hobeta_writer")
 local ok_thex, thex_module = pcall(require, "theX")
 local format_detector = ok_thex and thex_module and thex_module.format_detector or nil
