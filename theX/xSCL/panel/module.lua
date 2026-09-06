@@ -1,7 +1,9 @@
 local F = far.Flags
 local config = require("theX.xSCL.config")
+local ok_xtrd_config, xtrd_config = pcall(require, "theX.xTRD.config")
 local i18n = require("theX.xSCL.i18n")
 local path_util = require("theX.xSCL.util.path")
+local transfer_cache = require("theX.panel_transfer_cache")
 local archive = require("theX.xSCL.core.archive")
 local factory = require("theX.xSCL.panel.factory")
 local raw_writer = require("theX.formats.raw_writer")
@@ -20,6 +22,14 @@ if type(format_detector) ~= "table" then
   if ok_format_detector and type(loaded_format_detector) == "table" then
     format_detector = loaded_format_detector
   end
+end
+
+local function looks_like_xtrd_archive_object(value)
+  return type(value) == "table"
+    and type(value.Entries) == "table"
+    and type(value.IndexByName) == "table"
+    and type(value.Meta) == "table"
+    and value.CurrentDirIndex ~= nil
 end
 if type(export_dialog) ~= "table" then
   local ok_export_dialog, loaded_export_dialog = pcall(require, "theX.export_dialog")
@@ -60,6 +70,7 @@ local clone_entries = nil
 local apply_imported_entries_to_object = nil
 local open_panel_objects = setmetatable({}, { __mode = "k" })
 local types_registry_cache = nil
+local xtrd_panel_module_cache = nil
 local pending_transfer_intent_by_object = setmetatable({}, { __mode = "k" })
 local pending_transfer_intent_ttl_seconds = 5
 
@@ -184,6 +195,18 @@ local function read_far_lang_config()
   return nil
 end
 
+
+local function load_xtrd_panel_module()
+  if type(xtrd_panel_module_cache) == "table" then
+    return xtrd_panel_module_cache
+  end
+  local ok_module, loaded_module = pcall(require, "theX.xTRD.panel.module")
+  if ok_module and type(loaded_module) == "table" then
+    xtrd_panel_module_cache = loaded_module
+    return loaded_module
+  end
+  return nil
+end
 local function guid_as_key(value)
   if value == nil then
     return nil
@@ -204,13 +227,139 @@ local function guid_as_key(value)
   return text
 end
 
+local function call_xtrd_putfiles_from_cache(passive_panel_info, move_requested)
+  local xtrd_module = load_xtrd_panel_module()
+  if type(xtrd_module) ~= "table" or type(xtrd_module.PutFiles) ~= "function" then
+    return nil, "xtrd PutFiles unavailable"
+  end
+
+  local function panel_info_candidates()
+    local out = {}
+    if type(passive_panel_info) == "table" then
+      out[#out + 1] = passive_panel_info
+    end
+    local get_panel_info = type(panel) == "table" and panel.GetPanelInfo or nil
+    if type(get_panel_info) == "function" then
+      local ok_passive, passive_info = pcall(get_panel_info, nil, 0)
+      if ok_passive and type(passive_info) == "table" then
+        out[#out + 1] = passive_info
+      end
+      local ok_active, active_info = pcall(get_panel_info, nil, 1)
+      if ok_active and type(active_info) == "table" then
+        out[#out + 1] = active_info
+      end
+    end
+    return out
+  end
+
+  local function is_xtrd_panel_info(pinfo)
+    if type(pinfo) ~= "table" then
+      return false
+    end
+    local owner_guid = pinfo.OwnerGuid
+      or pinfo.OwnerGUID
+      or pinfo.PluginId
+      or pinfo.PluginID
+      or pinfo.PluginGuid
+      or pinfo.PluginGUID
+    local owner_key = guid_as_key(owner_guid)
+    local xtrd_key = guid_as_key(ok_xtrd_config and type(xtrd_config) == "table" and xtrd_config.panel_module_guid or nil)
+    if owner_key ~= nil and xtrd_key ~= nil and owner_key == xtrd_key then
+      return true
+    end
+    local panel_format = type(pinfo.Format) == "string" and pinfo.Format:lower() or ""
+    if panel_format:find("tr-dos trd", 1, true) ~= nil then
+      return true
+    end
+    return looks_like_xtrd_archive_object(pinfo.PluginObject)
+  end
+
+  local function normalize_host(host_value)
+    if type(host_value) == "string" and host_value ~= "" then
+      return host_value
+    end
+    return nil
+  end
+
+  local target_object = nil
+  local target_handle = nil
+  local candidates = panel_info_candidates()
+  for i = 1, #candidates do
+    local pinfo = candidates[i]
+    if is_xtrd_panel_info(pinfo) then
+      local candidate_object = pinfo.PluginObject
+      if type(candidate_object) == "table" then
+        local candidate_host = normalize_host(candidate_object.HostFile)
+          or normalize_host(pinfo.HostFile)
+          or normalize_host(pinfo.ShortcutData)
+        if candidate_host ~= nil then
+          candidate_object.HostFile = candidate_host
+        end
+        if normalize_host(candidate_object.HostFile) ~= nil then
+          target_object = candidate_object
+          target_handle = nil
+          break
+        end
+      end
+    end
+  end
+  if type(target_object) ~= "table" and type(xtrd_module.GetTransferTargetObject) == "function" then
+    local ok_target, fallback_target_object = pcall(xtrd_module.GetTransferTargetObject)
+    if ok_target and type(fallback_target_object) == "table" then
+      target_object = fallback_target_object
+      target_handle = nil
+    end
+  end
+
+  if type(target_object) ~= "table" then
+    return nil, "xtrd target object not resolved"
+  end
+  local ok_call, put_result = pcall(xtrd_module.PutFiles, target_object, target_handle, nil, move_requested == true, nil, nil)
+  if not ok_call then
+    return nil, tostring(put_result)
+  end
+  return tonumber(put_result) == 1, tostring(put_result)
+end
+
 local function guid_equals(left_guid, right_guid)
+  if left_guid ~= nil and right_guid ~= nil and left_guid == right_guid then
+    return true
+  end
   local left_key = guid_as_key(left_guid)
   local right_key = guid_as_key(right_guid)
   if left_key == nil or right_key == nil then
     return false
   end
   return left_key == right_key
+end
+
+local function resolve_panel_owner_kind(panel_info)
+  if type(panel_info) ~= "table" then
+    return nil
+  end
+  local owner_guid = panel_info.OwnerGuid
+    or panel_info.OwnerGUID
+    or panel_info.PluginId
+    or panel_info.PluginID
+    or panel_info.PluginGuid
+    or panel_info.PluginGUID
+  if guid_equals(owner_guid, config.panel_module_guid) then
+    return "xscl"
+  end
+  if ok_xtrd_config and type(xtrd_config) == "table" and guid_equals(owner_guid, xtrd_config.panel_module_guid) then
+    return "xtrd"
+  end
+  local panel_format = type(panel_info.Format) == "string" and panel_info.Format:lower() or ""
+  if panel_format:find("tr-dos trd", 1, true) ~= nil then
+    return "xtrd"
+  end
+  if panel_format:find("tr-dos scl", 1, true) ~= nil then
+    return "xscl"
+  end
+  if looks_like_xtrd_archive_object(panel_info.PluginObject) then
+    return "xtrd"
+  end
+  return nil
 end
 
 local function resolve_ui_lang()
@@ -1738,10 +1887,12 @@ local function find_source_panel_object(current_object)
     local pinfo = probes[i]
     if type(pinfo) == "table" then
       local candidate = pinfo.PluginObject
-      if looks_like_archive_object(candidate) and candidate ~= current_object then
-        local owner_matches = guid_equals(pinfo.OwnerGuid, config.panel_module_guid)
+      if resolve_panel_owner_kind(pinfo) == "xscl"
+        and looks_like_archive_object(candidate)
+        and candidate ~= current_object
+      then
         local selected_count = tonumber(pinfo.SelectedItemsNumber) or 0
-        local score = (owner_matches and 100 or 0) + (selected_count > 0 and 10 or 0) + selected_count
+        local score = 100 + (selected_count > 0 and 10 or 0) + selected_count
         if best == nil or score > best.score then
           best = { object = candidate, score = score }
         end
@@ -1756,6 +1907,9 @@ local function is_xscl_panel_copy_destination(current_object)
   if type(passive_pinfo) ~= "table" then
     return false
   end
+  if resolve_panel_owner_kind(passive_pinfo) ~= "xscl" then
+    return false
+  end
   local passive_object = passive_pinfo.PluginObject
   if not looks_like_archive_object(passive_object) then
     return false
@@ -1764,9 +1918,13 @@ local function is_xscl_panel_copy_destination(current_object)
 end
 
 local function get_passive_archive_panel_target(current_object)
+  local passive_pinfo = call_panel_method(panel.GetPanelInfo, nil, 0)
+  if resolve_panel_owner_kind(passive_pinfo) == "xtrd" then
+    return nil
+  end
   local best = nil
   local probes = {
-    call_panel_method(panel.GetPanelInfo, nil, 0),
+    passive_pinfo,
     call_panel_method(panel.GetPanelInfo, nil, 1),
   }
   for i = 1, #probes do
@@ -1774,9 +1932,11 @@ local function get_passive_archive_panel_target(current_object)
     if type(pinfo) == "table" then
       local candidate = pinfo.PluginObject
       local is_passive_probe = i == 1
-      if looks_like_archive_object(candidate) and (candidate ~= current_object or is_passive_probe) then
-        local score = (guid_equals(pinfo.OwnerGuid, config.panel_module_guid) and 100 or 0)
-          + (tonumber(pinfo.SelectedItemsNumber) or 0)
+      if resolve_panel_owner_kind(pinfo) == "xscl"
+        and looks_like_archive_object(candidate)
+        and (candidate ~= current_object or is_passive_probe)
+      then
+        local score = 100 + (tonumber(pinfo.SelectedItemsNumber) or 0)
         if candidate == current_object and not is_passive_probe then
           score = score - 1
         end
@@ -1800,13 +1960,6 @@ local function get_passive_archive_panel_target(current_object)
   if type(registered_peer) == "table" and registered_peer ~= current_object then
     return {
       object = registered_peer,
-      handle = nil,
-    }
-  end
-  local fallback_object = find_source_panel_object(current_object)
-  if type(fallback_object) == "table" and fallback_object ~= current_object then
-    return {
-      object = fallback_object,
       handle = nil,
     }
   end
@@ -2243,7 +2396,39 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
   local items = resolve_panel_items_for_transfer(handle, panel_items)
   sync_selection_order(object, handle, items)
   local entries = archive.select_entries(object, items)
+  local passive_panel_info = call_panel_method(panel.GetPanelInfo, nil, 0)
+  local passive_owner_kind = resolve_panel_owner_kind(passive_panel_info)
+  local resolved_dest_path = resolve_destination_out_dir(dest_path)
+  local destination_looks_like_far_temp = looks_like_far_temp_transfer_path(dest_path)
   if #entries == 0 then
+    return true
+  end
+  if passive_owner_kind == "xtrd" then
+    local cached_entries = clone_entries(entries)
+    transfer_cache.store({
+      target_kind = "xtrd",
+      source_kind = "xscl",
+      move_requested = move_requested,
+      entries = cached_entries,
+    })
+    local put_ok, put_result = call_xtrd_putfiles_from_cache(passive_panel_info, move_requested)
+    if put_ok == nil then
+      return true
+    end
+    if put_ok ~= true then
+      return false
+    end
+    if move_requested then
+      local removed, remove_error = remove_entries_from_archive_object(object, handle, entries)
+      if not removed then
+        far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
+        return false
+      end
+    end
+    clear_object_selection_state(object)
+    clear_panel_selection_flags(handle, items)
+    call_panel_method(panel.UpdatePanel, handle)
+    call_panel_method(panel.RedrawPanel, handle)
     return true
   end
   local copy_result, copy_mode, copy_target_object, copy_target_handle = copy_entries_between_xscl_panels(
@@ -2284,12 +2469,9 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
     return false
   end
   local has_xscl_destination = is_xscl_panel_copy_destination(object)
-  local destination_looks_like_far_temp = looks_like_far_temp_transfer_path(dest_path)
-  if not has_xscl_destination and destination_looks_like_far_temp then
+  if not has_xscl_destination and destination_looks_like_far_temp and passive_owner_kind ~= "xtrd" then
     local registered_peer = find_registered_peer_object(object)
     if type(registered_peer) == "table" and registered_peer ~= object then
-      has_xscl_destination = true
-    elseif intent_kind == "copy" or intent_kind == "move" then
       has_xscl_destination = true
     end
   end
@@ -2297,7 +2479,35 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
     remember_pending_panel_transfer(entries, object, handle, move_requested)
     return true
   end
-  local default_out_dir = resolve_destination_out_dir(dest_path)
+  if not has_xscl_destination and destination_looks_like_far_temp and passive_owner_kind ~= "xscl" then
+    local cached_entries = clone_entries(entries)
+    transfer_cache.store({
+      target_kind = "xtrd",
+      source_kind = "xscl",
+      move_requested = move_requested,
+      entries = cached_entries,
+    })
+    local put_ok, put_result = call_xtrd_putfiles_from_cache(passive_panel_info, move_requested)
+    if put_ok == nil then
+      return true
+    end
+    if put_ok ~= true then
+      return false
+    end
+    if move_requested then
+      local removed, remove_error = remove_entries_from_archive_object(object, handle, entries)
+      if not removed then
+        far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
+        return false
+      end
+    end
+    clear_object_selection_state(object)
+    clear_panel_selection_flags(handle, items)
+    call_panel_method(panel.UpdatePanel, handle)
+    call_panel_method(panel.RedrawPanel, handle)
+    return true
+  end
+  local default_out_dir = resolved_dest_path
   local options = move_requested and ask_move_options(entries, default_out_dir) or ask_copy_options(entries, default_out_dir)
   if options == false then
     return false
