@@ -173,6 +173,12 @@ local function normalize_rule(rule)
   if tonumber(rule.start) then
     out.start = math.floor(tonumber(rule.start))
   end
+  if tonumber(rule.start_gt) then
+    out.start_gt = math.floor(tonumber(rule.start_gt))
+  end
+  if tonumber(rule.start_lt) then
+    out.start_lt = math.floor(tonumber(rule.start_lt))
+  end
   if tonumber(rule.no_secs) then
     out.no_secs = math.floor(tonumber(rule.no_secs))
   end
@@ -184,6 +190,9 @@ local function normalize_rule(rule)
   end
   if type(rule.description) == "string" and rule.description ~= "" then
     out.description = rule.description
+  end
+  if type(rule.group) == "string" and rule.group ~= "" then
+    out.group = string.lower(rule.group)
   end
   if type(rule.description_vars) == "table" then
     local description_vars = {}
@@ -411,13 +420,23 @@ local function check_signature(scan_data, signature)
 end
 
 local function rule_matches(entry, rule, scan_data)
+  local entry_start = tonumber(entry.trdos_start)
+  if entry_start ~= nil then
+    entry_start = math.floor(entry_start)
+  end
   if rule.type and rule.type ~= entry.trdos_type then
     return false
   end
   if rule.size and rule.size ~= entry.size then
     return false
   end
-  if rule.start and rule.start ~= entry.trdos_start then
+  if rule.start and rule.start ~= entry_start then
+    return false
+  end
+  if rule.start_gt and (entry_start == nil or entry_start <= rule.start_gt) then
+    return false
+  end
+  if rule.start_lt and (entry_start == nil or entry_start >= rule.start_lt) then
     return false
   end
   if rule.no_secs and rule.no_secs ~= entry.trdos_sectors then
@@ -571,6 +590,7 @@ function M.detect_entry(entry, registry)
       return {
         order = i,
         description = detected_description or rule.description,
+        group = rule.group,
         new_type = rule.new_type,
         special_char = rule.special_char,
         show_header = rule.show_header,

@@ -28,11 +28,11 @@ local function build_temp_file_path(entry, temp_prefix, path_join)
 end
 
 local function should_open_with_xlook(entry)
-  local pc_name = type(entry) == "table" and entry.pc_name or nil
-  if type(pc_name) ~= "string" or pc_name == "" then
+  local detected_group = type(entry) == "table" and entry.detected_group or nil
+  if type(detected_group) ~= "string" or detected_group == "" then
     return false
   end
-  return pc_name:match("%.[!$][%w]%d?$") ~= nil
+  return detected_group:lower() == "asm"
 end
 
 local function open_in_viewer(temp_file, title)

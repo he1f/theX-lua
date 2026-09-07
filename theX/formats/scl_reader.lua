@@ -336,6 +336,9 @@ function M.read(file_path)
         if type(detected.new_type) == "string" and detected.new_type ~= "" then
           entry.detected_new_type = detected.new_type
         end
+        if type(detected.group) == "string" and detected.group ~= "" then
+          entry.detected_group = detected.group
+        end
         if detected.comment ~= nil then
           entry.comment = detected.comment
         end

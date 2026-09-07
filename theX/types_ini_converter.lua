@@ -161,6 +161,14 @@ local function parse_type_like(raw_value)
   return value
 end
 
+local function parse_group(raw_value)
+  local value = decode_cp866_text(trim(raw_value))
+  if type(value) ~= "string" or value == "" then
+    return nil
+  end
+  return value
+end
+
 local function tokenize_signature(raw_value)
   local value = trim(raw_value)
   local len = #value
@@ -400,10 +408,13 @@ local function section_to_rule(section)
   end
 
   set_if_not_nil(rule, "type", parse_type_like(values.type))
+  set_if_not_nil(rule, "group", parse_group(values.group))
   set_if_not_nil(rule, "new_type", parse_type_like(values.newtype or values.new_type))
   set_if_not_nil(rule, "special_char", parse_type_like(values.specialchar or values.special_char))
 
   set_if_not_nil(rule, "start", parse_number(values.start))
+  set_if_not_nil(rule, "start_gt", parse_number(values.startgt or values.start_gt))
+  set_if_not_nil(rule, "start_lt", parse_number(values.startlt or values.start_lt))
   set_if_not_nil(rule, "size", parse_number(values.size))
   set_if_not_nil(rule, "no_secs", parse_number(values.nosecs or values.no_secs))
   set_if_not_nil(rule, "order", parse_number(values.order))

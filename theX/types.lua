@@ -448,6 +448,14 @@ local rules = {
     type = "A",
   },
   {
+    description = "Asm source (TASM 4.12)",
+    group = "asm",
+    new_type = "a",
+    special_char = "!",
+    start_lt = 4097,
+    type = "A",
+  },
+  {
     description = "Asm source (STORM)",
     group = "asm",
     new_type = "a",
@@ -2236,12 +2244,6 @@ local rules = {
   {
     description = "BGE plugin",
     type = ">",
-  },
-  {
-    description = "Asm source (TASM 4.12)",
-    new_type = "a",
-    special_char = "!",
-    type = "A",
   },
 }
 

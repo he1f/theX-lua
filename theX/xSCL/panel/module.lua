@@ -1504,6 +1504,7 @@ local function apply_detected_entry_format(entry, registry)
   entry.trdos_type_description = fallback_description
   entry.trdos_description = fallback_description
   entry.detected_new_type = nil
+  entry.detected_group = nil
   entry.detected_rule_order = nil
   entry.detected_special_char = nil
   entry.detected_show_header = nil
@@ -1522,6 +1523,9 @@ local function apply_detected_entry_format(entry, registry)
   end
   if type(detected.new_type) == "string" and detected.new_type ~= "" then
     entry.detected_new_type = detected.new_type
+  end
+  if type(detected.group) == "string" and detected.group ~= "" then
+    entry.detected_group = detected.group
   end
   if detected.comment ~= nil then
     entry.comment = detected.comment
