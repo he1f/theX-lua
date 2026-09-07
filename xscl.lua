@@ -80,7 +80,7 @@ MenuItem {
   menu = "Plugins";
   area = "Shell";
   guid = config.menu_item_guid;
-  text = "xSCL";
+  text = "SCL eXplorer";
   action = function()
     local obj = xSCL.panel_factory.from_active_panel()
     if obj then
