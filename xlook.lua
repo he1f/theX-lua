@@ -14,6 +14,7 @@ local function load_xlook()
   package.loaded["theX.xLook.masm"] = nil
   package.loaded["theX.xLook.masm3"] = nil
   package.loaded["theX.xLook.storm"] = nil
+  package.loaded["theX.xLook.tasm2"] = nil
   package.loaded["theX.xLook.tasm"] = nil
   package.loaded["theX.xLook.zxasm"] = nil
   return require("theX.xLook.xlook")

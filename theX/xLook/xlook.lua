@@ -6,6 +6,7 @@ local masm = require("theX.xLook.masm")
 local masm3 = require("theX.xLook.masm3")
 local storm = require("theX.xLook.storm")
 local tasm = require("theX.xLook.tasm")
+local tasm2 = require("theX.xLook.tasm2")
 local zxasm = require("theX.xLook.zxasm")
 
 local M = {}
@@ -451,6 +452,16 @@ function M.run(command_text, options)
       decoder_name = storm_name or "storm"
     else
       decode_error = storm_error or decode_error
+    end
+  end
+  if type(listing_text) ~= "string" or listing_text == "" then
+    local tasm2_text, tasm2_error, tasm2_name = tasm2.decode(raw_hobeta)
+    if type(tasm2_text) == "string" and tasm2_text ~= "" then
+      listing_text = tasm2_text
+      decode_error = nil
+      decoder_name = tasm2_name or "tasm2"
+    else
+      decode_error = tasm2_error or decode_error
     end
   end
   if type(listing_text) ~= "string" or listing_text == "" then
