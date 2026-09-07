@@ -19,6 +19,7 @@ local export_engine = ok_thex and thex_module and thex_module.export_engine or n
 local file_info_dialog = ok_thex and thex_module and thex_module.file_info_dialog or nil
 local ok_xlook, xlook_module = pcall(require, "theX.xLook.xlook")
 local xlook = ok_xlook and type(xlook_module) == "table" and xlook_module or nil
+local panel_open = require("theX.xLook.panel_open")
 if type(format_detector) ~= "table" then
   local ok_format_detector, loaded_format_detector = pcall(require, "theX.format_detector")
   if ok_format_detector and type(loaded_format_detector) == "table" then
@@ -2791,52 +2792,6 @@ local function get_current_entry(object)
   return object.IndexByName[file_name]
 end
 
-local function sanitize_temp_name(value)
-  local safe_name = type(value) == "string" and value or ""
-  safe_name = safe_name:gsub('[<>:"/\\|%?%*]', "_")
-  safe_name = safe_name:gsub("%s+", "_")
-  safe_name = safe_name:gsub("[%. ]+$", "")
-  if safe_name == "" then
-    safe_name = "entry.bin"
-  end
-  return safe_name
-end
-
-local function build_temp_file_path(entry)
-  local temp_root = win.GetEnv("TEMP") or win.GetEnv("TMP") or "."
-  local unique = ("%d_%06d"):format(os.time(), math.random(0, 999999))
-  local pc_name = type(entry) == "table" and entry.pc_name or nil
-  local safe_name = sanitize_temp_name(pc_name)
-  return path_util.join(temp_root, "xscl_" .. unique .. "." .. safe_name)
-end
-
-local function should_open_with_xlook(entry)
-  local pc_name = type(entry) == "table" and entry.pc_name or nil
-  if type(pc_name) ~= "string" or pc_name == "" then
-    return false
-  end
-  return pc_name:match("%.[!$][%w]%d?$") ~= nil
-end
-
-local function open_in_viewer(temp_file, title)
-  if viewer and type(viewer.Viewer) == "function" then
-    return viewer.Viewer(temp_file, title, nil, nil, nil, nil, "VF_DELETEONCLOSE")
-  end
-  if far and type(far.Viewer) == "function" then
-    return far.Viewer(temp_file, title, nil, nil, nil, nil, "VF_DELETEONCLOSE")
-  end
-  return nil
-end
-
-local function open_in_editor(temp_file, title)
-  if editor and type(editor.Editor) == "function" then
-    return editor.Editor(temp_file, title, nil, nil, nil, nil, "EF_DELETEONCLOSE", 1, 1)
-  end
-  if far and type(far.Editor) == "function" then
-    return far.Editor(temp_file, title, nil, nil, nil, nil, "EF_DELETEONCLOSE", 1, 1)
-  end
-  return nil
-end
 
 local function resolve_entry_open_data(entry)
   local fallback_data = entry.data or string.rep("\0", entry.size or 0)
@@ -2859,61 +2814,31 @@ local function resolve_entry_open_data(entry)
   return fallback_data
 end
 
-local function resolve_entry_hobeta_data_for_xlook(entry)
-  if type(entry) ~= "table" then
-    return ""
-  end
-  local packed_hobeta = hobeta_writer.pack_single_entry(entry)
-  if type(packed_hobeta) == "string" and packed_hobeta ~= "" then
-    return packed_hobeta
-  end
-  if type(entry.hobeta) == "string" and entry.hobeta ~= "" then
-    return entry.hobeta
-  end
-  return resolve_entry_open_data(entry)
-end
 
 local function open_entry_from_temp(object, mode)
   local entry = get_current_entry(object)
   if not entry then
     return nil
   end
-  local use_xlook = should_open_with_xlook(entry)
-    and type(xlook) == "table"
-    and type(xlook.run) == "function"
-
-  local temp_file = build_temp_file_path(entry)
-  local data = use_xlook and resolve_entry_hobeta_data_for_xlook(entry) or resolve_entry_open_data(entry)
-  local ok = raw_writer.write_file(temp_file, data)
-  if not ok then
-    far.Message(tr_message("failed_create_temp_file"), config.name, nil, "w")
-    return 1
-  end
-
-  if use_xlook then
-    local ok_run, handled = pcall(xlook.run, temp_file, { quiet = true, require_output = true })
-    if ok_run and handled ~= false then
-      return 1
-    end
-  end
-
-  if mode == "view" then
-    local opened = open_in_viewer(temp_file, entry.name)
-    if opened == nil or opened == false then
+  return panel_open.open_entry_from_temp({
+    entry = entry,
+    mode = mode,
+    temp_prefix = "xscl",
+    path_join = path_util.join,
+    write_file = raw_writer.write_file,
+    resolve_open_data = resolve_entry_open_data,
+    pack_hobeta = hobeta_writer.pack_single_entry,
+    xlook = xlook,
+    on_temp_write_failed = function()
+      far.Message(tr_message("failed_create_temp_file"), config.name, nil, "w")
+    end,
+    on_viewer_unavailable = function()
       far.Message(tr_message("viewer_unavailable"), config.name, nil, "w")
-    end
-    return 1
-  end
-
-  if mode == "edit" then
-    local opened = open_in_editor(temp_file, entry.name)
-    if opened == nil or opened == false then
+    end,
+    on_editor_unavailable = function()
       far.Message(tr_message("editor_unavailable"), config.name, nil, "w")
-    end
-    return 1
-  end
-
-  return nil
+    end,
+  })
 end
 
 local function trim_spaces(value)

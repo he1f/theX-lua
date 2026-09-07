@@ -21,7 +21,7 @@ local function load_xlook()
 end
 
 CommandLine {
-  description = "xLook: open Hobeta/Alasm in editor";
+  description = "xLook: open Hobeta ZX Assemler files in editor";
   prefixes = "xlook";
   action = function(prefix, text)
     local xlook = load_xlook()

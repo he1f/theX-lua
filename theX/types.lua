@@ -312,6 +312,7 @@ local rules = {
   },
   {
     description = "Asm source (XAS)",
+    group = "asm",
     comment = {
       length = 29,
       offset = 0,
@@ -323,6 +324,7 @@ local rules = {
   },
   {
     description = "Asm source (XAS)",
+    group = "asm",
     comment = {
       length = 29,
       offset = 0,
@@ -334,6 +336,7 @@ local rules = {
   },
   {
     description = "Asm source (XAS)",
+    group = "asm",
     comment = {
       length = 29,
       offset = 0,
@@ -345,6 +348,7 @@ local rules = {
   },
   {
     description = "Asm source (ALASM)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 0,
@@ -365,6 +369,7 @@ local rules = {
   },
   {
     description = "Asm source (ZX ASM 3.0)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 35151,
@@ -372,6 +377,7 @@ local rules = {
   },
   {
     description = "Asm source (ZX ASM 3.10)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 28019,
@@ -379,6 +385,7 @@ local rules = {
   },
   {
     description = "Asm source (ZX ASM 3.10)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 8224,
@@ -386,6 +393,7 @@ local rules = {
   },
   {
     description = "Asm source (ZX ASM 3.10)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 28001,
@@ -393,6 +401,7 @@ local rules = {
   },
   {
     description = "Asm source (ZX ASM 3.10)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 29537,
@@ -400,6 +409,7 @@ local rules = {
   },
   {
     description = "Asm source (MASM 1.1)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 38667,
@@ -407,6 +417,7 @@ local rules = {
   },
   {
     description = "Asm source (MASM 1.1)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 38821,
@@ -414,6 +425,7 @@ local rules = {
   },
   {
     description = "Asm source (TASM 2.0)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 38750,
@@ -421,6 +433,7 @@ local rules = {
   },
   {
     description = "Asm source (TASM 3.0)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 39221,
@@ -428,6 +441,7 @@ local rules = {
   },
   {
     description = "Asm source (TASM by XLD)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 40872,
@@ -435,6 +449,7 @@ local rules = {
   },
   {
     description = "Asm source (STORM)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 49163,
@@ -442,6 +457,7 @@ local rules = {
   },
   {
     description = "Asm source (STORM)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 49155,
@@ -449,6 +465,7 @@ local rules = {
   },
   {
     description = "Asm source (STORM)",
+    group = "asm",
     new_type = "a",
     special_char = "!",
     start = 49163,

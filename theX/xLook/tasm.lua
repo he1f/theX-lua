@@ -67,7 +67,7 @@ function Tasm:detect()
     return true, "TASM 4.12"
   end
   if self.header_type == "A" and self.header_start == 40872 then
-    return true, "TASM"
+    return true, "TASM 4.0 by XLD"
   end
   return false, nil
 end
