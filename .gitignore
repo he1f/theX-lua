@@ -11,4 +11,5 @@ Panel.Esc.lua
 Panel.SpaceToSelect.lua
 picture.lua
 virtualenv.lua
-
+macropanel_en.hlf
+macropanel.lua
