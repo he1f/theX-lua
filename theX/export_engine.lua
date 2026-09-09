@@ -1,4 +1,5 @@
 local M = {}
+local overwrite_policy = require("theX.overwrite_policy")
 
 local function to_bool(value)
   return value == true or value == 1
@@ -123,7 +124,47 @@ local function resolve_hobeta_entry_target_name(entry, skip_header, naming)
   return hobeta_name(entry)
 end
 
-local function export_hobeta_entries(params, entries, out_dir, skip_header)
+local function append_entries(target, entries)
+  if type(target) ~= "table" or type(entries) ~= "table" then
+    return
+  end
+  for i = 1, #entries do
+    target[#target + 1] = entries[i]
+  end
+end
+
+local function create_export_report()
+  return {
+    exported_entries = {},
+    skipped_entries = {},
+    exported_files = {},
+    skipped_files = {},
+    cancelled = false,
+  }
+end
+
+local function write_with_overwrite_policy(params, session, report, target_file, data, related_entries)
+  local decision = overwrite_policy.resolve_write_decision(session, target_file)
+  if decision == "cancel" then
+    report.cancelled = true
+    return false, "cancelled"
+  end
+  if decision == "skip" then
+    report.skipped_files[#report.skipped_files + 1] = target_file
+    append_entries(report.skipped_entries, related_entries)
+    return true
+  end
+
+  local write_ok, write_error = params.write_file(target_file, data)
+  if not write_ok then
+    return nil, write_error or "unable to write export output"
+  end
+  report.exported_files[#report.exported_files + 1] = target_file
+  append_entries(report.exported_entries, related_entries)
+  return true
+end
+
+local function export_hobeta_entries(params, entries, out_dir, skip_header, session, report)
   for i = 1, #entries do
     local entry = entries[i]
     local target_name = resolve_hobeta_entry_target_name(entry, skip_header, params.naming)
@@ -139,9 +180,19 @@ local function export_hobeta_entries(params, entries, out_dir, skip_header)
       return nil, build_error or "unable to build Hobeta export output"
     end
 
-    local write_ok, write_error = params.write_file(target_file, data)
-    if not write_ok then
-      return nil, write_error or "unable to write Hobeta export output"
+    local write_ok, write_error = write_with_overwrite_policy(
+      params,
+      session,
+      report,
+      target_file,
+      data,
+      { entry }
+    )
+    if write_ok == nil then
+      return nil, write_error
+    end
+    if write_ok == false then
+      return true
     end
   end
   return true
@@ -153,17 +204,18 @@ function M.execute(params)
     return nil, error_msg
   end
   local entries = type(params.entries) == "table" and params.entries or {}
+  local report = create_export_report()
   if #entries == 0 then
-    return true
+    return true, nil, report
   end
 
   if type(params.join_path) ~= "function" or type(params.write_file) ~= "function" then
     local error_msg = "missing filesystem callbacks"
-    return nil, error_msg
+    return nil, error_msg, report
   end
   if type(params.pack_hobeta) ~= "function" or type(params.pack_scl) ~= "function" then
     local error_msg = "missing packer callbacks"
-    return nil, error_msg
+    return nil, error_msg, report
   end
 
   local options = type(params.options) == "table" and params.options or {}
@@ -173,8 +225,17 @@ function M.execute(params)
   end
   local skip_header = to_bool(options.skip_header)
   local out_dir = params.out_dir or ""
+  local session = overwrite_policy.new_session({
+    file_exists = params.file_exists,
+    confirm_overwrite = params.confirm_overwrite,
+  })
+
   if format_name == "hobeta" then
-    return export_hobeta_entries(params, entries, out_dir, skip_header)
+    local exported, export_error = export_hobeta_entries(params, entries, out_dir, skip_header, session, report)
+    if exported == nil then
+      return nil, export_error, report
+    end
+    return true, nil, report
   end
 
   local target_name = resolve_target_name(entries, skip_header, params.naming)
@@ -187,10 +248,21 @@ function M.execute(params)
     data, build_error = params.pack_scl(entries)
   end
   if data == nil then
-    return nil, build_error or "unable to build export output"
+    return nil, build_error or "unable to build export output", report
   end
 
-  return params.write_file(target_file, data)
+  local write_ok, write_error = write_with_overwrite_policy(
+    params,
+    session,
+    report,
+    target_file,
+    data,
+    entries
+  )
+  if write_ok == nil then
+    return nil, write_error, report
+  end
+  return true, nil, report
 end
 
 return M

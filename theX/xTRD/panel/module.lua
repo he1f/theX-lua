@@ -1,4 +1,5 @@
 local F = far.Flags
+local ACTIVE, PASSIVE = F.PANEL_ACTIVE, F.PANEL_PASSIVE
 local config = require("theX.xTRD.config")
 local ok_xscl_config, xscl_config = pcall(require, "theX.xSCL.config")
 local i18n = require("theX.xTRD.i18n")
@@ -17,9 +18,10 @@ local transfer_cache = require("theX.panel_transfer_cache")
 local ok_xlook, xlook_module = pcall(require, "theX.xLook.xlook")
 local xlook = ok_xlook and type(xlook_module) == "table" and xlook_module or nil
 local panel_open = require("theX.xLook.panel_open")
+local overwrite_policy = require("theX.overwrite_policy")
 
 local M = {}
-local C0_PAD_CHAR = "\194\160"
+local C0_PAD_CHAR = " "
 local panel_modes = nil
 local panel_modes_lang = nil
 local current_locale = i18n.get("en")
@@ -278,6 +280,160 @@ local function tr_message(message_key, params)
     template = tostring(message_key)
   end
   return i18n.format(template, params)
+end
+
+local WINDOWS_EPOCH_DIFF_SECONDS = 11644473600
+
+local function format_file_size_and_date(file_path)
+  if type(win) ~= "table" or type(win.GetFileInfo) ~= "function" then
+    return nil
+  end
+  local ok_info, file_info = pcall(win.GetFileInfo, file_path)
+  if not ok_info or type(file_info) ~= "table" then
+    return nil
+  end
+
+  local size_value = tonumber(file_info.FileSize)
+  if type(size_value) ~= "number" or size_value < 0 then
+    size_value = nil
+  end
+
+  local date_text = nil
+  local last_write_time = tonumber(file_info.LastWriteTime)
+  if type(last_write_time) == "number" and last_write_time > 0 then
+    local unix_time = math.floor(last_write_time / 1000 - WINDOWS_EPOCH_DIFF_SECONDS)
+    local ok_date, formatted_date = pcall(os.date, "%d.%m.%Y %H:%M:%S", unix_time)
+    if ok_date and type(formatted_date) == "string" and formatted_date ~= "" then
+      date_text = formatted_date
+    end
+  end
+
+  if size_value == nil and date_text == nil then
+    return nil
+  end
+  local parts = {}
+  if size_value ~= nil then
+    parts[#parts + 1] = tostring(math.floor(size_value))
+  end
+  if date_text ~= nil then
+    parts[#parts + 1] = date_text
+  end
+  return table.concat(parts, " ")
+end
+
+local function file_name_from_path(path_value)
+  if type(path_value) ~= "string" or path_value == "" then
+    return ""
+  end
+  return path_value:match("([^\\\\/]+)$") or path_value
+end
+
+local OVERWRITE_DIALOG_GUID = win.Uuid("1F53E031-DCC5-4FE0-B3C9-5AADE32FDD6E")
+
+local function resolve_dialog_index_base_for_overwrite(items, result)
+  if type(result) ~= "number" then
+    return 1
+  end
+  local item_direct = items[result]
+  if type(item_direct) == "table" and item_direct[1] == F.DI_BUTTON then
+    return 1
+  end
+  local item_shifted = items[result + 1]
+  if type(item_shifted) == "table" and item_shifted[1] == F.DI_BUTTON then
+    return 0
+  end
+  return 1
+end
+
+local function ask_overwrite_action_via_message(info_line)
+  local buttons = table.concat({
+    tr_message("overwrite_button_overwrite"),
+    tr_message("overwrite_button_all"),
+    tr_message("overwrite_button_skip"),
+    tr_message("overwrite_button_skip_all"),
+    tr_message("button_cancel"),
+  }, ";")
+  local text = tr_message("overwrite_file_exists") .. "\n" .. info_line
+  local answer = tonumber(far.Message(text, tr_message("warning_title"), buttons, "w")) or 0
+  if answer == 1 then
+    return "overwrite"
+  end
+  if answer == 2 then
+    return "overwrite_all"
+  end
+  if answer == 3 then
+    return "skip"
+  end
+  if answer == 4 then
+    return "skip_all"
+  end
+  return "cancel"
+end
+
+local function ask_overwrite_action(target_path)
+  local target_text = tostring(target_path or "")
+  local info_line = file_name_from_path(target_text)
+  local file_info_text = format_file_size_and_date(target_path)
+  if info_line == "" then
+    info_line = target_text
+  end
+  if type(file_info_text) == "string" and file_info_text ~= "" then
+    info_line = info_line .. " " .. file_info_text
+  end
+  if type(far.DialogInit) ~= "function"
+    or type(far.DialogRun) ~= "function"
+    or type(far.DialogFree) ~= "function"
+  then
+    return ask_overwrite_action_via_message(info_line)
+  end
+
+  local items = {
+    { F.DI_DOUBLEBOX, 3, 1, 73, 6, 0, "", "", 0, tr_message("warning_title") },
+    { F.DI_TEXT, 5, 2, 71, 2, 0, "", "", 0, tr_message("overwrite_file_exists") },
+    { F.DI_TEXT, 5, 3, 71, 3, 0, "", "", 0, info_line },
+    { F.DI_TEXT, 5, 4, 0, 4, 0, "", "", F.DIF_SEPARATOR, "" },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, tr_message("overwrite_button_overwrite") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_all") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_skip") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_skip_all") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("button_cancel") },
+  }
+
+  local dialog_flags = type(F.FDLG_WARNING) == "number" and F.FDLG_WARNING or 0
+  local hdlg = far.DialogInit(OVERWRITE_DIALOG_GUID, -1, -1, 77, 8, nil, items, dialog_flags, nil)
+  if not hdlg then
+    return ask_overwrite_action_via_message(info_line)
+  end
+
+  local ok_run, result = pcall(far.DialogRun, hdlg)
+  if not ok_run then
+    far.DialogFree(hdlg)
+    return "cancel"
+  end
+  if result == -1 then
+    far.DialogFree(hdlg)
+    return "cancel"
+  end
+
+  local index_base = resolve_dialog_index_base_for_overwrite(items, result)
+  local overwrite_index = index_base == 0 and 4 or 5
+  local all_index = index_base == 0 and 5 or 6
+  local skip_index = index_base == 0 and 6 or 7
+  local skip_all_index = index_base == 0 and 7 or 8
+  far.DialogFree(hdlg)
+  if result == overwrite_index then
+    return "overwrite"
+  end
+  if result == all_index then
+    return "overwrite_all"
+  end
+  if result == skip_index then
+    return "skip"
+  end
+  if result == skip_all_index then
+    return "skip_all"
+  end
+  return "cancel"
 end
 
 local function tr_info_line(info_key)
@@ -902,6 +1058,53 @@ local function clear_panel_selection_flags(handle, panel_items)
   elseif begin_mode == "active" then
     call_panel_method(panel.EndSelection, nil, 1)
   end
+end
+
+local function _prepare_indexes(handle, items)
+  local indexes = {}
+  if type(items) ~= "table" or #items == 0 then
+    return indexes
+  end
+  local selected_names = {}
+  for i = 1, #items do
+    local item = items[i]
+    local file_name = type(item) == "table" and item.FileName or nil
+    if type(file_name) == "string" and file_name ~= "" and file_name ~= ".." then
+      selected_names[file_name] = true
+    end
+  end
+  if next(selected_names) == nil then
+    return indexes
+  end
+
+  local pinfo = panel.GetPanelInfo(handle, 1)
+  local items_number = type(pinfo) == "table" and tonumber(pinfo.ItemsNumber) or 0
+  if type(items_number) ~= "number" or items_number <= 0 then
+    return indexes
+  end
+
+  for item_index = 1, items_number do
+    local panel_item = panel.GetPanelItem(handle, 1, item_index)
+    local panel_name = type(panel_item) == "table" and panel_item.FileName or nil
+    if type(panel_name) == "string" and selected_names[panel_name] then
+      indexes[#indexes + 1] = item_index
+    end
+  end
+  return indexes
+end
+
+local function set_panel_selection_flags(handle, exported_items, skipped_items)
+  local exported_indexes = _prepare_indexes(handle, exported_items)
+  local skipped_indexes = _prepare_indexes(handle, skipped_items)
+
+  panel.BeginSelection(handle, ACTIVE)
+  if #skipped_indexes ~= 0 then
+    panel.SetSelection(handle, ACTIVE, skipped_indexes, true)
+  end
+  if #exported_indexes ~= 0 then
+    panel.SetSelection(handle, ACTIVE, exported_indexes, false)
+  end
+  panel.EndSelection(handle, ACTIVE)
 end
 
 local function is_move_requested(move)
@@ -1865,6 +2068,7 @@ function M.SetDirectory(object, handle, dir, op_mode)
     archive.set_current_dir_index(object, parent_dir_index)
     call_panel_method(panel.UpdatePanel, handle)
     call_panel_method(panel.RedrawPanel, handle)
+    archive.track_selection(object, get_selected_panel_items(handle))
     return true
   end
   if type(dir) == "string" and dir ~= "" then
@@ -2000,7 +2204,7 @@ local function pack_hobeta(entry)
 end
 
 local function export_entries_via_engine(entries, out_dir, options)
-  local ok_exec, exec_ok, exec_error = pcall(export_engine.execute, {
+  local ok_exec, exec_ok, exec_error, exec_report = pcall(export_engine.execute, {
     entries = entries,
     out_dir = out_dir,
     options = normalize_copy_options(options),
@@ -2008,11 +2212,15 @@ local function export_entries_via_engine(entries, out_dir, options)
     write_file = raw_writer.write_file,
     pack_hobeta = pack_hobeta,
     pack_scl = scl_writer.pack_entries,
+    confirm_overwrite = ask_overwrite_action,
   })
   if not ok_exec then
-    return nil, tr_message("export_engine_runtime_error") .. "\n" .. tostring(exec_ok)
+    return nil, tr_message("export_engine_runtime_error") .. "\n" .. tostring(exec_ok), nil
   end
-  return exec_ok, exec_error
+  if exec_ok == nil then
+    return nil, exec_error, exec_report
+  end
+  return true, exec_error, exec_report
 end
 
 local function entry_export_key(entry)
@@ -2030,6 +2238,45 @@ local function entry_export_key(entry)
     return "name:" .. entry.name
   end
   return nil
+end
+
+local function clear_object_selection_state_for_entries(object, entries)
+  if type(object) ~= "table" or type(entries) ~= "table" or #entries == 0 then
+    return
+  end
+  local selection_state = type(object.SelectionState) == "table" and object.SelectionState or nil
+  if type(selection_state) ~= "table" then
+    return
+  end
+  local selected_keys = type(selection_state.selected_keys) == "table" and selection_state.selected_keys or nil
+  local order_by_key = type(selection_state.order_by_key) == "table" and selection_state.order_by_key or nil
+  if type(selected_keys) ~= "table" or type(order_by_key) ~= "table" then
+    return
+  end
+  for i = 1, #entries do
+    local entry_key = entry_export_key(entries[i])
+    if type(entry_key) == "string" and entry_key ~= "" then
+      selected_keys[entry_key] = nil
+      order_by_key[entry_key] = nil
+    end
+  end
+end
+
+local function panel_items_from_entries(entries)
+  local out = {}
+  if type(entries) ~= "table" then
+    return out
+  end
+  local added = {}
+  for i = 1, #entries do
+    local entry = entries[i]
+    local file_name = type(entry) == "table" and (entry.pc_name or entry.name) or nil
+    if type(file_name) == "string" and file_name ~= "" and not added[file_name] then
+      added[file_name] = true
+      out[#out + 1] = { FileName = file_name }
+    end
+  end
+  return out
 end
 local function normalize_dir_index(value)
   local dir_index = tonumber(value)
@@ -2127,9 +2374,19 @@ local function collect_export_entries(object, panel_items)
 end
 
 local function export_entries_as_raw_files(entries, out_dir)
+  local report = {
+    exported_entries = {},
+    skipped_entries = {},
+    exported_files = {},
+    skipped_files = {},
+    cancelled = false,
+  }
   if type(entries) ~= "table" or #entries == 0 then
-    return true
+    return true, report
   end
+  local session = overwrite_policy.new_session({
+    confirm_overwrite = ask_overwrite_action,
+  })
   for i = 1, #entries do
     local entry = entries[i]
     local file_name = type(entry) == "table" and (entry.pc_name or entry.name) or nil
@@ -2138,12 +2395,24 @@ local function export_entries_as_raw_files(entries, out_dir)
     end
     local target_path = path_util.join(out_dir, file_name)
     local data = resolve_entry_open_data(entry)
-    local ok_write, write_error = raw_writer.write_file(target_path, data)
-    if not ok_write then
-      return nil, write_error or target_path
+    local decision = overwrite_policy.resolve_write_decision(session, target_path)
+    if decision == "cancel" then
+      report.cancelled = true
+      return true, report
+    end
+    if decision == "skip" then
+      report.skipped_files[#report.skipped_files + 1] = target_path
+      report.skipped_entries[#report.skipped_entries + 1] = entry
+    else
+      local ok_write, write_error = raw_writer.write_file(target_path, data)
+      if not ok_write then
+        return nil, write_error or target_path, report
+      end
+      report.exported_files[#report.exported_files + 1] = target_path
+      report.exported_entries[#report.exported_entries + 1] = entry
     end
   end
-  return true
+  return true, report
 end
 
 function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
@@ -2180,15 +2449,29 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
       far.Message(tr_message("destination_path_empty"), config.name, nil, "w")
       return false
     end
-    local handoff_ok, handoff_error = export_entries_as_raw_files(entries, default_out_dir)
+    local handoff_ok, handoff_error, handoff_report = export_entries_as_raw_files(entries, default_out_dir)
     if not handoff_ok then
       far.Message(tr_message("export_failed") .. "\n" .. tostring(handoff_error or default_out_dir), config.name, nil, "w")
       return false
     end
-    clear_object_selection_state(object)
-    clear_panel_selection_flags(handle, items)
+    local handoff_exported_entries = type(handoff_report) == "table" and handoff_report.exported_entries or nil
+    local handoff_skipped_entries = type(handoff_report) == "table" and handoff_report.skipped_entries or nil
+    if type(handoff_exported_entries) ~= "table" then
+      handoff_exported_entries = entries
+    end
+    if type(handoff_skipped_entries) ~= "table" then
+      handoff_skipped_entries = {}
+    end
+    if #handoff_exported_entries > 0 then
+      clear_object_selection_state_for_entries(object, handoff_exported_entries)
+      clear_panel_selection_flags(handle, panel_items_from_entries(handoff_exported_entries))
+    end
+    if #handoff_skipped_entries > 0 then
+      set_panel_selection_flags(handle, panel_items_from_entries(handoff_skipped_entries))
+    end
     call_panel_method(panel.UpdatePanel, handle)
     call_panel_method(panel.RedrawPanel, handle)
+    archive.track_selection(object, get_selected_panel_items(handle))
     return true
   end
   local options = move_requested and ask_move_options(entries, default_out_dir) or ask_copy_options(entries, default_out_dir)
@@ -2202,16 +2485,27 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
     return false
   end
 
-  local exported, export_error = export_entries_via_engine(entries, out_dir, options)
+  local exported, export_error, export_report = export_entries_via_engine(entries, out_dir, options)
   if not exported then
     far.Message(tr_message("export_failed") .. "\n" .. tostring(export_error or out_dir), config.name, nil, "w")
     return false
   end
-
-  clear_object_selection_state(object)
-  clear_panel_selection_flags(handle, items)
-  call_panel_method(panel.UpdatePanel, handle)
+  local exported_entries = type(export_report) == "table" and export_report.exported_entries or nil
+  local skipped_entries = type(export_report) == "table" and export_report.skipped_entries or nil
+  if type(exported_entries) ~= "table" then
+    exported_entries = entries
+  end
+  if type(skipped_entries) ~= "table" then
+    skipped_entries = {}
+  end
+  if #exported_entries > 0 then
+    clear_object_selection_state_for_entries(object, exported_entries)
+  end
+  if #skipped_entries > 0 then
+    set_panel_selection_flags(handle, panel_items_from_entries(exported_entries), panel_items_from_entries(skipped_entries))
+  end
   call_panel_method(panel.RedrawPanel, handle)
+  archive.track_selection(object, get_selected_panel_items(handle))
   return true
 end
 

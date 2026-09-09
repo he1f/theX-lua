@@ -1,4 +1,5 @@
 local F = far.Flags
+local ACTIVE, PASSIVE = F.PANEL_ACTIVE, F.PANEL_PASSIVE
 local config = require("theX.xSCL.config")
 local ok_xtrd_config, xtrd_config = pcall(require, "theX.xTRD.config")
 local i18n = require("theX.xSCL.i18n")
@@ -54,7 +55,7 @@ if type(file_info_dialog) ~= "table" then
 end
 
 local M = {}
-local C0_PAD_CHAR = "\194\160"
+local C0_PAD_CHAR = " "
 local panel_modes = nil
 local panel_modes_lang = nil
 local SCL_MAX_FILES = 255
@@ -400,6 +401,159 @@ local function tr_message(message_key, params)
     template = tostring(message_key)
   end
   return i18n.format(template, params)
+end
+
+local WINDOWS_EPOCH_DIFF_SECONDS = 11644473600
+
+local function format_file_size_and_date(file_path)
+  if type(win) ~= "table" or type(win.GetFileInfo) ~= "function" then
+    return nil
+  end
+  local ok_info, file_info = pcall(win.GetFileInfo, file_path)
+  if not ok_info or type(file_info) ~= "table" then
+    return nil
+  end
+
+  local size_value = tonumber(file_info.FileSize)
+  if type(size_value) ~= "number" or size_value < 0 then
+    size_value = nil
+  end
+
+  local date_text = nil
+  local last_write_time = tonumber(file_info.LastWriteTime)
+  if type(last_write_time) == "number" and last_write_time > 0 then
+    local unix_time = math.floor(last_write_time / 1000 - WINDOWS_EPOCH_DIFF_SECONDS)
+    local ok_date, formatted_date = pcall(os.date, "%d.%m.%Y %H:%M:%S", unix_time)
+    if ok_date and type(formatted_date) == "string" and formatted_date ~= "" then
+      date_text = formatted_date
+    end
+  end
+
+  if size_value == nil and date_text == nil then
+    return nil
+  end
+  local parts = {}
+  if size_value ~= nil then
+    parts[#parts + 1] = tostring(math.floor(size_value))
+  end
+  if date_text ~= nil then
+    parts[#parts + 1] = date_text
+  end
+  return table.concat(parts, " ")
+end
+
+local function file_name_from_path(path_value)
+  if type(path_value) ~= "string" or path_value == "" then
+    return ""
+  end
+  return path_value:match("([^\\\\/]+)$") or path_value
+end
+
+local OVERWRITE_DIALOG_GUID = win.Uuid("AEE8C8E6-9E22-4F48-9B7E-B22DE33E4A21")
+
+local function resolve_dialog_index_base_for_overwrite(items, result)
+  if type(result) ~= "number" then
+    return 1
+  end
+  local item_direct = items[result]
+  if type(item_direct) == "table" and item_direct[1] == F.DI_BUTTON then
+    return 1
+  end
+  local item_shifted = items[result + 1]
+  if type(item_shifted) == "table" and item_shifted[1] == F.DI_BUTTON then
+    return 0
+  end
+  return 1
+end
+
+local function ask_overwrite_action_via_message(info_line)
+  local buttons = table.concat({
+    tr_message("overwrite_button_overwrite"),
+    tr_message("overwrite_button_all"),
+    tr_message("overwrite_button_skip"),
+    tr_message("overwrite_button_skip_all"),
+    tr_message("button_cancel"),
+  }, ";")
+  local text = tr_message("overwrite_file_exists") .. "\n" .. info_line
+  local answer = tonumber(far.Message(text, tr_message("warning_title"), buttons, "w")) or 0
+  if answer == 1 then
+    return "overwrite"
+  end
+  if answer == 2 then
+    return "overwrite_all"
+  end
+  if answer == 3 then
+    return "skip"
+  end
+  if answer == 4 then
+    return "skip_all"
+  end
+  return "cancel"
+end
+local function ask_overwrite_action(target_path)
+  local target_text = tostring(target_path or "")
+  local info_line = file_name_from_path(target_text)
+  local file_info_text = format_file_size_and_date(target_path)
+  if info_line == "" then
+    info_line = target_text
+  end
+  if type(file_info_text) == "string" and file_info_text ~= "" then
+    info_line = info_line .. " " .. file_info_text
+  end
+  if type(far.DialogInit) ~= "function"
+    or type(far.DialogRun) ~= "function"
+    or type(far.DialogFree) ~= "function"
+  then
+    return ask_overwrite_action_via_message(info_line)
+  end
+
+  local items = {
+    { F.DI_DOUBLEBOX, 3, 1, 73, 6, 0, "", "", 0, tr_message("warning_title") },
+    { F.DI_TEXT, 5, 2, 71, 2, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_file_exists") },
+    { F.DI_TEXT, 5, 3, 71, 3, 0, "", "", F.DIF_CENTERGROUP, info_line },
+    { F.DI_TEXT, 5, 4, 0, 4, 0, "", "", F.DIF_SEPARATOR, "" },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, tr_message("overwrite_button_overwrite") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_all") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_skip") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("overwrite_button_skip_all") },
+    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr_message("button_cancel") },
+  }
+
+  local dialog_flags = type(F.FDLG_WARNING) == "number" and F.FDLG_WARNING or 0
+  local hdlg = far.DialogInit(OVERWRITE_DIALOG_GUID, -1, -1, 77, 8, nil, items, dialog_flags, nil)
+  if not hdlg then
+    return ask_overwrite_action_via_message(info_line)
+  end
+
+  local ok_run, result = pcall(far.DialogRun, hdlg)
+  if not ok_run then
+    far.DialogFree(hdlg)
+    return "cancel"
+  end
+  if result == -1 then
+    far.DialogFree(hdlg)
+    return "cancel"
+  end
+
+  local index_base = resolve_dialog_index_base_for_overwrite(items, result)
+  local overwrite_index = index_base == 0 and 4 or 5
+  local all_index = index_base == 0 and 5 or 6
+  local skip_index = index_base == 0 and 6 or 7
+  local skip_all_index = index_base == 0 and 7 or 8
+  far.DialogFree(hdlg)
+  if result == overwrite_index then
+    return "overwrite"
+  end
+  if result == all_index then
+    return "overwrite_all"
+  end
+  if result == skip_index then
+    return "skip"
+  end
+  if result == skip_all_index then
+    return "skip_all"
+  end
+  return "cancel"
 end
 
 
@@ -1169,9 +1323,9 @@ local function export_entries_via_engine(entries, out_dir, options)
   end
   if type(export_engine) ~= "table" or type(export_engine.execute) ~= "function" then
     local error_msg = tr_message("export_engine_unavailable")
-    return nil, error_msg
+    return nil, error_msg, nil
   end
-  local ok_exec, exec_ok, exec_err = pcall(export_engine.execute, {
+  local ok_exec, exec_ok, exec_err, exec_report = pcall(export_engine.execute, {
     entries = entries,
     out_dir = out_dir,
     options = normalize_copy_options(options),
@@ -1179,13 +1333,16 @@ local function export_entries_via_engine(entries, out_dir, options)
     write_file = raw_writer.write_file,
     pack_hobeta = pack_hobeta,
     pack_scl = scl_writer.pack_entries,
+    confirm_overwrite = ask_overwrite_action,
   })
   if not ok_exec then
     local error_msg = tr_message("export_engine_runtime_error")
-    return nil, error_msg .. "\n" .. tostring(exec_ok)
+    return nil, error_msg .. "\n" .. tostring(exec_ok), nil
   end
-
-  return exec_ok, exec_err
+  if exec_ok == nil then
+    return nil, exec_err, exec_report
+  end
+  return true, exec_err, exec_report
 end
 
 local function ascii_lower(value)
@@ -2339,13 +2496,60 @@ local function clear_object_selection_state(object)
   }
 end
 
-local function clear_panel_selection_flags(handle, panel_items)
-  if type(panel_items) ~= "table" or #panel_items == 0 then
+local function _prepare_indexes(handle, items)
+  local indexes = {}
+  if type(items) ~= "table" or #items == 0 then
+    return indexes
+  end
+  local selected_names = {}
+  for i = 1, #items do
+    local item = items[i]
+    local file_name = type(item) == "table" and item.FileName or nil
+    if type(file_name) == "string" and file_name ~= "" and file_name ~= ".." then
+      selected_names[file_name] = true
+    end
+  end
+  if next(selected_names) == nil then
+    return indexes
+  end
+
+  local pinfo = panel.GetPanelInfo(handle, 1)
+  local items_number = type(pinfo) == "table" and tonumber(pinfo.ItemsNumber) or 0
+  if type(items_number) ~= "number" or items_number <= 0 then
+    return indexes
+  end
+
+  for item_index = 1, items_number do
+    local panel_item = panel.GetPanelItem(handle, 1, item_index)
+    local panel_name = type(panel_item) == "table" and panel_item.FileName or nil
+    if type(panel_name) == "string" and selected_names[panel_name] then
+      indexes[#indexes + 1] = item_index
+    end
+  end
+  return indexes
+end
+
+local function set_panel_selection_flags(handle, exported_items, skipped_items)
+  local exported_indexes = _prepare_indexes(handle, exported_items)
+  local skipped_indexes = _prepare_indexes(handle, skipped_items)
+
+  panel.BeginSelection(handle, ACTIVE)
+  if #skipped_indexes ~= 0 then
+    panel.SetSelection(handle, ACTIVE, skipped_indexes, true)
+  end
+  if #exported_indexes ~= 0 then
+    panel.SetSelection(handle, ACTIVE, exported_indexes, false)
+  end
+  panel.EndSelection(handle, ACTIVE)
+end
+
+local function clear_panel_selection_flags(handle, items)
+  if type(items) ~= "table" or #items == 0 then
     return
   end
   local selected_names = {}
-  for i = 1, #panel_items do
-    local item = panel_items[i]
+  for i = 1, #items do
+    local item = items[i]
     local file_name = type(item) == "table" and item.FileName or nil
     if type(file_name) == "string" and file_name ~= "" and file_name ~= ".." then
       selected_names[file_name] = true
@@ -2355,55 +2559,88 @@ local function clear_panel_selection_flags(handle, panel_items)
     return
   end
 
-  local pinfo = call_panel_method(panel.GetPanelInfo, handle)
-  if type(pinfo) ~= "table" then
-    pinfo = call_panel_method(panel.GetPanelInfo, nil, 1)
-  end
+  local pinfo = panel.GetPanelInfo(handle, 1)
   local items_number = type(pinfo) == "table" and tonumber(pinfo.ItemsNumber) or 0
   if type(items_number) ~= "number" or items_number <= 0 then
     return
   end
 
-  local selected_indexes = {}
+  local indexes = {}
   for item_index = 1, items_number do
-    local panel_item = call_panel_method(panel.GetPanelItem, handle, nil, item_index)
-    if panel_item == nil then
-      panel_item = call_panel_method(panel.GetPanelItem, nil, 1, item_index)
-    end
+    local panel_item = panel.GetPanelItem(handle, 1, item_index)
     local panel_name = type(panel_item) == "table" and panel_item.FileName or nil
     if type(panel_name) == "string" and selected_names[panel_name] then
-      selected_indexes[#selected_indexes + 1] = item_index
+      indexes[#indexes + 1] = item_index
     end
   end
-  if #selected_indexes == 0 then
+  if #indexes == 0 then
     return
   end
 
-  local begin_mode = nil
-  if call_panel_method(panel.BeginSelection, handle) then
-    begin_mode = "handle"
-  elseif call_panel_method(panel.BeginSelection, nil, 1) then
-    begin_mode = "active"
+  panel.BeginSelection(handle, 1)
+  panel.ClearSelection(handle, 1, indexes)
+  panel.EndSelection(handle, 1)
+end
+
+local function entry_selection_keys(entry)
+  if type(entry) ~= "table" then
+    return {}
+  end
+  local keys = {}
+  local entry_id = tonumber(entry.__xscl_entry_id)
+  if entry_id and entry_id >= 1 then
+    keys[#keys + 1] = "id:" .. tostring(math.floor(entry_id))
+  end
+  local pc_name = entry.pc_name
+  if type(pc_name) == "string" and pc_name ~= "" then
+    keys[#keys + 1] = "pc:" .. pc_name
+  end
+  local panel_name = entry.name
+  if type(panel_name) == "string" and panel_name ~= "" then
+    keys[#keys + 1] = "name:" .. panel_name
+  end
+  return keys
+end
+
+local function clear_object_selection_state_for_entries(object, entries)
+  if type(object) ~= "table" or type(entries) ~= "table" or #entries == 0 then
+    return
+  end
+  local selection_state = type(object.SelectionState) == "table" and object.SelectionState or nil
+  if type(selection_state) ~= "table" then
+    return
+  end
+  local selected_keys = type(selection_state.selected_keys) == "table" and selection_state.selected_keys or nil
+  local order_by_key = type(selection_state.order_by_key) == "table" and selection_state.order_by_key or nil
+  if type(selected_keys) ~= "table" or type(order_by_key) ~= "table" then
+    return
   end
 
-  local cleared = call_panel_method(panel.ClearSelection, handle, nil, selected_indexes)
-  if not cleared then
-    cleared = call_panel_method(panel.ClearSelection, nil, 1, selected_indexes)
-  end
-  if not cleared then
-    for i = 1, #selected_indexes do
-      local index_value = selected_indexes[i]
-      if not call_panel_method(panel.ClearSelection, handle, nil, index_value) then
-        call_panel_method(panel.ClearSelection, nil, 1, index_value)
-      end
+  for i = 1, #entries do
+    local keys = entry_selection_keys(entries[i])
+    for j = 1, #keys do
+      local key = keys[j]
+      selected_keys[key] = nil
+      order_by_key[key] = nil
     end
   end
+end
 
-  if begin_mode == "handle" then
-    call_panel_method(panel.EndSelection, handle)
-  elseif begin_mode == "active" then
-    call_panel_method(panel.EndSelection, nil, 1)
+local function panel_items_from_entries(entries)
+  local out = {}
+  if type(entries) ~= "table" then
+    return out
   end
+  local added = {}
+  for i = 1, #entries do
+    local entry = entries[i]
+    local file_name = type(entry) == "table" and (entry.pc_name or entry.name) or nil
+    if type(file_name) == "string" and file_name ~= "" and not added[file_name] then
+      added[file_name] = true
+      out[#out + 1] = { FileName = file_name }
+    end
+  end
+  return out
 end
 
 function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
@@ -2539,23 +2776,34 @@ function M.GetFiles(object, handle, panel_items, move, dest_path, op_mode)
     far.Message(tr_message("destination_path_empty"), config.name, nil, "w")
     return false
   end
-  local ok, err = export_entries_via_engine(entries, out_dir, options)
-
+  local ok, err, export_report = export_entries_via_engine(entries, out_dir, options)
   if not ok then
-    far.Message(err or tr_message("export_failed"), config.name, nil, "w")
+    far.Message(tostring(err or tr_message("export_failed")), config.name, nil, "w")
     return false
   end
-  if move_requested then
-    local removed, remove_error = remove_entries_from_archive_object(object, handle, entries)
+  local exported_entries = type(export_report) == "table" and export_report.exported_entries or nil
+  local skipped_entries = type(export_report) == "table" and export_report.skipped_entries or nil
+  if type(exported_entries) ~= "table" then
+    exported_entries = entries
+  end
+  if type(skipped_entries) ~= "table" then
+    skipped_entries = {}
+  end
+  if move_requested and #exported_entries > 0 then
+    local removed, remove_error = remove_entries_from_archive_object(object, handle, exported_entries)
     if not removed then
       far.Message(tr_message("move_source_update_failed") .. "\n" .. tostring(remove_error), config.name, nil, "w")
       return false
     end
   end
-  clear_object_selection_state(object)
-  clear_panel_selection_flags(handle, items)
-  call_panel_method(panel.UpdatePanel, handle)
+  if #exported_entries > 0 then
+    clear_object_selection_state_for_entries(object, exported_entries)
+  end
+  if #skipped_entries > 0 or #exported_entries > 0 then
+    set_panel_selection_flags(handle, panel_items_from_entries(exported_entries), panel_items_from_entries(skipped_entries))
+  end
   call_panel_method(panel.RedrawPanel, handle)
+  sync_selection_order(object, handle)
 
   return true
 end
