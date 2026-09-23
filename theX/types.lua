@@ -24,6 +24,7 @@ local rules = {
     new_type = "b",
     special_char = "!",
     type = "B",
+    group = "basic",
   },
   {
     description = "Overlay",
@@ -412,15 +413,23 @@ local rules = {
     group = "asm",
     new_type = "a",
     special_char = "!",
+    start = 38821,
+    type = "a",
+  },
+  {
+    description = "Asm source (MASM 2.0)",
+    group = "asm",
+    new_type = "a",
+    special_char = "!",
     start = 38667,
     type = "a",
   },
   {
-    description = "Asm source (MASM 1.1)",
+    description = "Asm source (MASM 3.0)",
     group = "asm",
     new_type = "a",
     special_char = "!",
-    start = 38821,
+    start = 37155,
     type = "a",
   },
   {
@@ -2247,7 +2256,4 @@ local rules = {
   },
 }
 
-return {
-  rules = rules,
-  formats = rules,
-}
+return rules

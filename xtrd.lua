@@ -1,661 +1,945 @@
--- %FARPROFILE%\Macros\scripts\xtrd.lua
 local macro_file = ...
 if type(macro_file) ~= "string" then
   return
 end
-
 local script_dir = macro_file:match("^(.*[\\/])") or ""
 package.path = script_dir .. "?\\init.lua;" .. script_dir .. "?.lua;" .. package.path
 
-local xTRD = require("theX.xTRD")
-local utils = require("theX.utils")
-local config = require("theX.xTRD.config")
-local i18n = require("theX.xTRD.i18n")
-local path_util = require("theX.xTRD.util.path")
-local raw_writer = require("theX.formats.raw_writer")
-local overwrite_policy = require("theX.overwrite_policy")
 local F = far.Flags
+local L = require("theX.ui.localization")
+local trd_reader = require("theX.formats.trd.reader")
+local dir_sys = require("theX.formats.trd.dir_sys")
+local trd_writer = require("theX.formats.trd.writer")
+local vfs_core = require("theX.trdos_vfs_core")
+local detector = require("theX.detector")
+local dialog_manager = require("theX.dialog.manager")
 
+local settings_manager = require("theX.settings_manager")
+local plugin_settings = settings_manager.new("xtrd")
+
+-- Справочник UUID и констант
+local plugin_guid = win.Uuid("B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D")
 local SECTOR_SIZE = 256
-local SECTORS_PER_TRACK = 16
-local TRD_TRACKS = 80
-local TRD_SIDES = 2
-local TRD_IMAGE_SIZE = TRD_SIDES * TRD_TRACKS * SECTORS_PER_TRACK * SECTOR_SIZE
-local DATA_START_TRACK = 1
-local SERVICE_SECTOR_OFFSET = 8 * SECTOR_SIZE
-local DIRSYS_SECTOR_OFFSET = 9 * SECTOR_SIZE
-local DIRSYS_SIGNATURE = "DirSys"
-local DIRSYS_RESERVED_OFFSET = 0x10A
-local DIRSYS_NAMES_OFFSET = 0x10B
-local DIRSYS_MAX_DIRS = 127
-local DIRSYS_NAME_SIZE = 11
-local DIRSYS_REGION_LENGTH = DIRSYS_NAMES_OFFSET + (DIRSYS_MAX_DIRS * DIRSYS_NAME_SIZE) + 1
-local WINDOWS_EPOCH_DIFF_SECONDS = 11644473600
 
-local OVERWRITE_DIALOG_GUID = win.Uuid("32F1016E-5F9C-49C2-9357-4B8A20D2DC3C")
-
-local function read_far_lang_config()
-  local get_config = nil
-  if type(far) == "table" and type(far.GetConfig) == "function" then
-    get_config = far.GetConfig
-  elseif type(Far) == "table" and type(Far.GetConfig) == "function" then
-    get_config = Far.GetConfig
-  end
-  if type(get_config) ~= "function" then
-    return nil
-  end
-
-  local keys = {
-    "Language.Main",
-    "Language",
-    "Interface.Language",
-    "System.Language",
-  }
-  for i = 1, #keys do
-    local ok_value, value = pcall(get_config, keys[i])
-    if ok_value and type(value) == "string" and value ~= "" then
-      return value
+--- Private helper to recursively trace parent IDs and compile a multi-level nested folder path string.
+---@param folders table[] The sequential cached array of active DirSys directories mapping properties
+---@param folder_id integer The targeted subdirectory entry identifier we want to trace from
+---@return string full_path Compiled string containing backslash-delimited path (e.g. "SOURCES\ASM\LIBS")
+local function compile_nested_folder_path(folders, folder_id)
+    if not folders or not folder_id or folder_id == 0 then
+        return ""
     end
-  end
-  return nil
-end
 
-local function resolve_ui_lang()
-  local far_lang = read_far_lang_config()
-  if type(far_lang) ~= "string" or far_lang == "" then
-    far_lang = win.GetEnv("FARLANG")
-  end
-  if type(far_lang) ~= "string" or far_lang == "" then
-    return "en"
-  end
-  local lower_lang = far_lang:lower()
-  if lower_lang:find("russian", 1, true) or lower_lang:find("рус", 1, true) then
-    return "ru"
-  end
-  return "en"
-end
+    local path_parts = {}
+    local current_id = folder_id
 
-local function tr(message_key)
-  local locale = i18n.get(resolve_ui_lang())
-  local messages = type(locale) == "table" and locale.messages or nil
-  local value = type(messages) == "table" and messages[message_key] or nil
-  if type(value) == "string" and value ~= "" then
-    return value
-  end
-  return tostring(message_key)
-end
+    -- Safe circuit breaker to protect against infinite loops in corrupted circular directory trees
+    local max_depth_safety = 128
 
-local function format_file_size_and_date(file_path)
-  if type(win) ~= "table" or type(win.GetFileInfo) ~= "function" then
-    return nil
-  end
-  local ok_info, file_info = pcall(win.GetFileInfo, file_path)
-  if not ok_info or type(file_info) ~= "table" then
-    return nil
-  end
+    while current_id ~= 0 and max_depth_safety > 0 do
+        max_depth_safety = max_depth_safety - 1
+        local found = false
 
-  local size_value = tonumber(file_info.FileSize)
-  if type(size_value) ~= "number" or size_value < 0 then
-    size_value = nil
-  end
+        for _, folder in ipairs(folders) do
+            if folder.id == current_id then
+                local f_name = folder.name or "UNKNOWN"
+                f_name = string.match(f_name, "^%s*(.-)%s*$") or f_name -- Trim trailing spaces
 
-  local date_text = nil
-  local last_write_time = tonumber(file_info.LastWriteTime)
-  if type(last_write_time) == "number" and last_write_time > 0 then
-    local unix_time = math.floor(last_write_time / 1000 - WINDOWS_EPOCH_DIFF_SECONDS)
-    local ok_date, formatted_date = pcall(os.date, "%d.%m.%Y %H:%M:%S", unix_time)
-    if ok_date and type(formatted_date) == "string" and formatted_date ~= "" then
-      date_text = formatted_date
+                table.insert(path_parts, 1, f_name) -- Insert at the beginning to reverse the upward walk
+                current_id = folder.parent_id or 0  -- Hop up to parent node location
+                found = true
+                break
+            end
+        end
+
+        if not found then
+            break
+        end
     end
-  end
 
-  if size_value == nil and date_text == nil then
-    return nil
-  end
-  local parts = {}
-  if size_value ~= nil then
-    parts[#parts + 1] = tostring(math.floor(size_value))
-  end
-  if date_text ~= nil then
-    parts[#parts + 1] = date_text
-  end
-  return table.concat(parts, " ")
+    return table.concat(path_parts, "\\")
 end
 
-local function file_name_from_path(path_value)
-  if type(path_value) ~= "string" or path_value == "" then
-    return ""
-  end
-  return path_value:match("([^\\\\/]+)$") or path_value
-end
+--- Executes full TR-DOS MOVE compaction process, physically erasing 0x01 flagged assets
+--- and shifting sectors arrays blocks down to eliminate fragmentation gaps.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@return nil
+local function execute_trdos_move_compaction(object, handle)
+    if not object or not object.files_list then return end
 
-local function resolve_dialog_index_base_for_overwrite(items, result)
-  if type(result) ~= "number" then
-    return 1
-  end
-  local item_direct = items[result]
-  if type(item_direct) == "table" and item_direct[1] == F.DI_BUTTON then
-    return 1
-  end
-  local item_shifted = items[result + 1]
-  if type(item_shifted) == "table" and item_shifted[1] == F.DI_BUTTON then
-    return 0
-  end
-  return 1
-end
+    -- Verify if there are any deleted assets present before initiating disk heavy operations
+    local has_deleted_files = (object.trd_info and (object.trd_info.deleted_files or 0) > 0)
+    local has_deleted_folders = false
 
-local function ask_overwrite_action_via_message(info_line)
-  local buttons = table.concat({
-    tr("overwrite_button_overwrite"),
-    tr("overwrite_button_all"),
-    tr("overwrite_button_skip"),
-    tr("overwrite_button_skip_all"),
-    tr("button_cancel"),
-  }, ";")
-  local text = tr("overwrite_file_exists") .. "\n" .. info_line
-  local answer = tonumber(far.Message(text, tr("warning_title"), buttons, "w")) or 0
-  if answer == 1 then
-    return "overwrite"
-  end
-  if answer == 2 then
-    return "overwrite_all"
-  end
-  if answer == 3 then
-    return "skip"
-  end
-  if answer == 4 then
-    return "skip_all"
-  end
-  return "cancel"
-end
-
-local function ask_overwrite_action(target_path)
-  local target_text = tostring(target_path or "")
-  local info_line = file_name_from_path(target_text)
-  local file_info_text = format_file_size_and_date(target_path)
-  if info_line == "" then
-    info_line = target_text
-  end
-  if type(file_info_text) == "string" and file_info_text ~= "" then
-    info_line = info_line .. " " .. file_info_text
-  end
-  if type(far.DialogInit) ~= "function"
-    or type(far.DialogRun) ~= "function"
-    or type(far.DialogFree) ~= "function"
-  then
-    return ask_overwrite_action_via_message(info_line)
-  end
-
-  local items = {
-    { F.DI_DOUBLEBOX, 3, 1, 73, 6, 0, "", "", 0, tr("warning_title") },
-    { F.DI_TEXT, 5, 2, 71, 2, 0, "", "", 0, tr("overwrite_file_exists") },
-    { F.DI_TEXT, 5, 3, 71, 3, 0, "", "", 0, info_line },
-    { F.DI_TEXT, 5, 4, 0, 4, 0, "", "", F.DIF_SEPARATOR, "" },
-    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, tr("overwrite_button_overwrite") },
-    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr("overwrite_button_all") },
-    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr("overwrite_button_skip") },
-    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr("overwrite_button_skip_all") },
-    { F.DI_BUTTON, 0, 5, 0, 5, 0, "", "", F.DIF_CENTERGROUP, tr("button_cancel") },
-  }
-
-  local dialog_flags = type(F.FDLG_WARNING) == "number" and F.FDLG_WARNING or 0
-  local hdlg = far.DialogInit(OVERWRITE_DIALOG_GUID, -1, -1, 77, 8, nil, items, dialog_flags, nil)
-  if not hdlg then
-    return ask_overwrite_action_via_message(info_line)
-  end
-
-  local ok_run, result = pcall(far.DialogRun, hdlg)
-  if not ok_run then
-    far.DialogFree(hdlg)
-    return "cancel"
-  end
-  if result == -1 then
-    far.DialogFree(hdlg)
-    return "cancel"
-  end
-
-  local index_base = resolve_dialog_index_base_for_overwrite(items, result)
-  local overwrite_index = index_base == 0 and 4 or 5
-  local all_index = index_base == 0 and 5 or 6
-  local skip_index = index_base == 0 and 6 or 7
-  local skip_all_index = index_base == 0 and 7 or 8
-  far.DialogFree(hdlg)
-  if result == overwrite_index then
-    return "overwrite"
-  end
-  if result == all_index then
-    return "overwrite_all"
-  end
-  if result == skip_index then
-    return "skip"
-  end
-  if result == skip_all_index then
-    return "skip_all"
-  end
-  return "cancel"
-end
-local function to_bool(value)
-  return value ~= nil and value ~= false and value ~= 0
-end
-
-local function get_dialog_text(hdlg, item_index)
-  local ok_get, value = pcall(far.SendDlgMessage, hdlg, "DM_GETTEXT", item_index, 0)
-  if not ok_get then
-    return ""
-  end
-  if type(value) == "string" then
-    return value
-  end
-  if type(value) == "table" then
-    if type(value[1]) == "string" then
-      return value[1]
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            if folder.deleted then
+                has_deleted_folders = true
+                break
+            end
+        end
     end
-    if type(value.Text) == "string" then
-      return value.Text
+
+    if not (has_deleted_files or has_deleted_folders) then
+        far.Message(L.trd_msg_move_no_deleted, L.m_plugin_menu_title, L.m_btn_ok, "i")
+        return
     end
-  end
-  if value == nil then
-    return ""
-  end
-  return tostring(value)
-end
 
-local function trim_spaces(value)
-  local text = type(value) == "string" and value or tostring(value or "")
-  return text:match("^%s*(.-)%s*$")
-end
+    -- [[ STEP 1: COMPACT FILES ROSTER MEMORY ARRAYS ]]
+    local active_files_buffer = {}
+    -- Keep tracking original-to-new index translations maps to reconstruct DirSys mappings safely
+    local file_index_migration_map = {}
+    local original_file_counter = 0
+    local migrated_file_counter = 0
 
-local function bytes_to_ascii_fallback(bytes)
-  if type(bytes) ~= "string" then
-    return ""
-  end
-  local out = {}
-  for i = 1, #bytes do
-    local byte_value = string.byte(bytes, i) or 0
-    if byte_value >= 32 and byte_value <= 126 then
-      out[#out + 1] = string.char(byte_value)
+    for idx, hobeta_file in ipairs(object.files_list) do
+        local m = hobeta_file.meta
+        local is_file_deleted = m and (m.deleted or string.byte(m.name or "", 1) == 0x01)
+
+        if not is_file_deleted then
+            table.insert(active_files_buffer, hobeta_file)
+            file_index_migration_map[original_file_counter] = migrated_file_counter
+            migrated_file_counter = migrated_file_counter + 1
+        else
+            file_index_migration_map[original_file_counter] = -1 -- Marked as dead node
+        end
+        original_file_counter = original_file_counter + 1
+    end
+
+    -- [[ STEP 2: COMPACT DIRSYS FOLDERS ROSTER MEMORY ARRAYS ]]
+    local active_folders_buffer = {}
+    local folder_id_migration_map = { [0] = 0 } -- Root index preservation anchor
+    local migrated_folder_counter = 0
+
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            if not folder.deleted and string.byte(folder.name, 1) ~= 0x01 then
+                migrated_folder_counter = migrated_folder_counter + 1
+                folder_id_migration_map[folder.id] = migrated_folder_counter
+
+                -- Temporarily staging data properties
+                table.insert(active_folders_buffer, {
+                    old_id = folder.id,
+                    old_parent_id = folder.parent_id or 0,
+                    name = folder.name
+                })
+            end
+        end
+
+        -- Re-serialize clean packed folders structures fixing updated parental tree relationships IDs
+        object.trd_folders = {}
+        for new_idx, staged_folder in ipairs(active_folders_buffer) do
+            local newly_assigned_parent = folder_id_migration_map[staged_folder.old_parent_id] or 0
+
+            table.insert(object.trd_folders, {
+                id        = new_idx,
+                name      = staged_folder.name,
+                parent_id = newly_assigned_parent,
+                deleted   = false
+            })
+        end
+    end
+
+    -- [[ STEP 3: RE-MAP ACTIVE DIRSYS FILE FILE_ASSIGNMENTS LOOKUPS ]]
+    if object.trd_file_maps then
+        local packed_file_maps = {}
+        for old_file_idx = 0, (original_file_counter - 1) do
+            local new_file_idx = file_index_migration_map[old_file_idx]
+
+            if new_file_idx and new_file_idx ~= -1 then
+                local old_parent_folder_id = object.trd_file_maps[old_file_idx] or 0
+                local new_parent_folder_id = folder_id_migration_map[old_parent_folder_id] or 0
+                packed_file_maps[new_file_idx] = new_parent_folder_id
+            end
+        end
+        object.trd_file_maps = packed_file_maps
+    end
+
+    -- Swop the transient files list buffer straight into main active panel context storage
+    object.files_list = active_files_buffer
+
+    -- Reset the native TR-DOS system deleted metrics counter parameter back to 0
+    if object.trd_info then
+        object.trd_info.deleted_files = 0
+    end
+
+    -- [[ STEP 4: PHYSICAL SECTORS SHIFT DEFRAGMENTATION AND FLUSH REWRITE ]]
+    -- We pass true as 4th parameter to update_headers to enforce dynamic reallocation
+    -- of tracks and sectors parameters for remaining active items sequentially!
+    local flush_success = trd_writer.save(object.archive_path, object.files_list, object, true)
+
+    if flush_success then
+        far.Message(L.trd_msg_move_success, L.m_trd_menu_title, L.m_btn_ok, "i")
+        -- Force low-level frame update queues triggers to surface shifts rows results
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE)
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
     else
-      out[#out + 1] = "_"
+        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
     end
-  end
-  return table.concat(out)
 end
 
-local function encode_cp866(value)
-  if type(value) ~= "string" then
-    return ""
-  end
-  if type(win) == "table"
-    and type(win.Utf8ToUtf16) == "function"
-    and type(win.WideCharToMultiByte) == "function"
-  then
-    local ok_wide, wide = pcall(win.Utf8ToUtf16, value)
-    if ok_wide and type(wide) == "string" and wide ~= "" then
-      local ok_cp866, cp866_bytes = pcall(win.WideCharToMultiByte, wide, 866)
-      if ok_cp866 and type(cp866_bytes) == "string" and cp866_bytes ~= "" then
-        return cp866_bytes
-      end
-    end
-  end
-  return bytes_to_ascii_fallback(value)
-end
+-- Публичный неймспейс плагина (сюда пишем ТОЛЬКО экспортируемые методы)
+local M = {}
 
-local function encode_disk_title(title_text)
-  local normalized = trim_spaces(title_text)
-  if type(normalized) ~= "string" or normalized == "" then
-    return string.rep(" ", 11), nil
-  end
-  local cp866_title = encode_cp866(normalized)
-  if type(cp866_title) ~= "string" then
-    cp866_title = ""
-  end
-  if #cp866_title > 11 then
-    return nil, tr("plugin_menu_create_empty_trd_title_too_long")
-  end
-  return cp866_title .. string.rep(" ", 11 - #cp866_title), nil
-end
+M.Info = {
+  Guid = plugin_guid,
+  Version = "0.1.0",
+  Title = "xTRD",
+  Description = "TRD eXplorer",
+  Author = "Dima Kozlov",
+}
 
-local function pack_le16(value)
-  local number_value = tonumber(value) or 0
-  number_value = math.floor(number_value) % 65536
-  local low_byte = number_value % 256
-  local high_byte = math.floor(number_value / 256) % 256
-  return string.char(low_byte, high_byte)
-end
+---@param object table The plugin instance table
+---@param handle userdata The low-level Far Manager panel handle
+---@return table info Configuration layout properties for Far Manager to render
+function M.GetOpenPanelInfo(object, handle)
+  -- 1. Принудительно обновляем данные из реестра/базы Far Manager перед выдачей инфо
+  plugin_settings.load_settings()
 
-local function replace_span(raw, start_pos, replacement_bytes)
-  if type(raw) ~= "string" or type(replacement_bytes) ~= "string" then
-    return nil
+  -- [[ ПРАВИЛО: Вычисляем числовой ASCII-код режима БЕЗ приведения к строке string.char ]]
+  local saved_mode_num = tonumber(plugin_settings.last_panel_mode) or 4
+  if saved_mode_num < 3 or saved_mode_num > 6 then
+      saved_mode_num = 4
   end
-  if start_pos < 1 then
-    return nil
-  end
-  local end_pos = start_pos + #replacement_bytes - 1
-  if end_pos > #raw then
-    return nil
-  end
-  return string.sub(raw, 1, start_pos - 1) .. replacement_bytes .. string.sub(raw, end_pos + 1)
-end
+  -- Маппим индекс режима на ASCII код символа: Режим 4 -> 0x30 + (4 - 1) = 0x33 ('3')
+  local start_mode_char_code = 0x30 + saved_mode_num
 
-local function replace_byte(raw, pos, byte_value)
-  local normalized = tonumber(byte_value)
-  if type(normalized) ~= "number" then
-    return nil
-  end
-  normalized = math.floor(normalized)
-  if normalized < 0 or normalized > 255 then
-    return nil
-  end
-  return replace_span(raw, pos, string.char(normalized))
-end
-
-local function bxor_byte(left_value, right_value)
-  local left_num = tonumber(left_value) or 0
-  local right_num = tonumber(right_value) or 0
-  local result = 0
-  local bit_value = 1
-  while left_num > 0 or right_num > 0 do
-    local left_bit = left_num % 2
-    local right_bit = right_num % 2
-    if left_bit ~= right_bit then
-      result = result + bit_value
-    end
-    left_num = math.floor(left_num / 2)
-    right_num = math.floor(right_num / 2)
-    bit_value = bit_value * 2
-  end
-  return result % 256
-end
-
-local function calc_dirsys_crc(payload)
-  local crc_high = 0
-  local crc_low = 0
-  for pos = 1, #payload do
-    local byte_value = string.byte(payload, pos) or 0
-    local prev_high = crc_high
-    local prev_low = crc_low
-    local e_value = bxor_byte(prev_low, byte_value)
-
-    crc_high = 0
-    crc_low = 0
-    for _ = 1, 8 do
-      local old_high = crc_high
-      local old_low = crc_low
-      crc_high = math.floor(old_high / 2) + ((old_low % 2) * 128)
-      crc_low = math.floor(old_low / 2) + ((old_high % 2) * 128)
-      if (bxor_byte(e_value, old_low) % 2) == 1 then
-        crc_high = bxor_byte(crc_high, 0xA0)
-        crc_low = bxor_byte(crc_low, 0x01)
-      end
-      e_value = math.floor(e_value / 2)
-    end
-
-    crc_low = bxor_byte(prev_high, crc_low)
-    crc_high = bxor_byte(prev_low, crc_high)
-  end
-  return crc_high, crc_low
-end
-
-local function initialize_dirsys_region(raw)
-  local base_pos = DIRSYS_SECTOR_OFFSET + 1
-  local region_end_pos = base_pos + DIRSYS_REGION_LENGTH - 1
-  if region_end_pos > #raw then
-    return nil, "xTRD: image is too short for DirSys area"
-  end
-
-  local updated = replace_span(raw, base_pos, string.rep("\0", DIRSYS_REGION_LENGTH))
-  if type(updated) ~= "string" then
-    return nil, "xTRD: failed to initialize DirSys region"
-  end
-
-  updated = replace_span(updated, base_pos + 2, DIRSYS_SIGNATURE)
-  updated = replace_span(updated, base_pos + 8, "100")
-  if type(updated) ~= "string" then
-    return nil, "xTRD: failed to initialize DirSys signature"
-  end
-
-  local crc_start_pos = base_pos + 2
-  local crc_end_pos = base_pos + DIRSYS_RESERVED_OFFSET
-  local crc_payload = string.sub(updated, crc_start_pos, crc_end_pos)
-  local crc_high, crc_low = calc_dirsys_crc(crc_payload)
-
-  updated = replace_byte(updated, base_pos, crc_high)
-  if type(updated) ~= "string" then
-    return nil, "xTRD: failed to store DirSys CRC high byte"
-  end
-  updated = replace_byte(updated, base_pos + 1, crc_low)
-  if type(updated) ~= "string" then
-    return nil, "xTRD: failed to store DirSys CRC low byte"
-  end
-  return updated
-end
-
-local function build_empty_trd_image(disk_title, install_dirsys)
-  local raw = string.rep("\0", TRD_IMAGE_SIZE)
-  local service_pos = SERVICE_SECTOR_OFFSET + 1
-  local total_sectors = TRD_SIDES * TRD_TRACKS * SECTORS_PER_TRACK
-  local free_sectors = total_sectors - (DATA_START_TRACK * SECTORS_PER_TRACK)
-
-  raw = replace_byte(raw, service_pos + 224, 0x00)
-  raw = replace_byte(raw, service_pos + 225, 0)
-  raw = replace_byte(raw, service_pos + 226, DATA_START_TRACK)
-  raw = replace_byte(raw, service_pos + 227, 0x16)
-  raw = replace_byte(raw, service_pos + 228, 0)
-  raw = replace_span(raw, service_pos + 229, pack_le16(free_sectors))
-  raw = replace_byte(raw, service_pos + 231, 0x10)
-  raw = replace_byte(raw, service_pos + 241, 0)
-  raw = replace_span(raw, service_pos + 245, disk_title)
-  if type(raw) ~= "string" then
-    return nil, "xTRD: failed to build service sector"
-  end
-
-  if install_dirsys == true then
-    local with_dirsys, dirsys_error = initialize_dirsys_region(raw)
-    if type(with_dirsys) ~= "string" then
-      return nil, dirsys_error
-    end
-    raw = with_dirsys
-  end
-  return raw, nil
-end
-
-local function open_current_trd_panel()
-  local obj = xTRD.panel_factory.from_active_panel()
-  if obj then
-    return xTRD.panel_module, obj
-  end
-  return nil
-end
-
-local function build_default_new_trd_path()
-  local base_dir = APanel.Path0
-  return path_util.join(base_dir, "new.trd")
-end
-
-local function ensure_trd_extension(file_path)
-  if type(file_path) ~= "string" then
-    return nil
-  end
-  if file_path:lower():match("%.trd$") ~= nil then
-    return file_path
-  end
-  return file_path .. ".trd"
-end
-local CREATE_EMPTY_TRD_DIALOG_GUID = win.Uuid("B4CB2296-4F22-4D62-9DC5-AB00DBB6C6CE")
-
-local function ask_create_empty_trd_options()
-  if type(far.DialogInit) ~= "function"
-    or type(far.DialogRun) ~= "function"
-    or type(far.DialogFree) ~= "function"
-  then
-    return nil, "Dialog API unavailable"
-  end
-
-  local items = {
-    { F.DI_DOUBLEBOX, 3, 1, 73, 9, 0, "", "", 0, tr("plugin_menu_create_empty_trd_title") },
-    { F.DI_TEXT, 5, 2, 71, 2, 0, "", "", 0, tr("plugin_menu_create_empty_trd_path_label") },
-    { F.DI_EDIT, 5, 3, 71, 3, 0, "xTRD.NewArchivePath", "", F.DIF_HISTORY, build_default_new_trd_path() },
-    { F.DI_TEXT, 5, 4, 71, 4, 0, "", "", 0, tr("plugin_menu_create_empty_trd_disk_title_label") },
-    { F.DI_EDIT, 5, 5, 71, 5, 0, "xTRD.NewDiskTitle", "", F.DIF_HISTORY, tr("plugin_menu_create_empty_trd_disk_title_default") },
-    { F.DI_CHECKBOX, 5, 6, 0, 6, 1, "", "", 0, tr("plugin_menu_create_empty_trd_dirsys_label") },
-    { F.DI_TEXT, 5, 7, 0, 7, 0, "", "", F.DIF_SEPARATOR, "" },
-    { F.DI_BUTTON, 0, 8, 0, 8, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, tr("plugin_menu_create_empty_trd_button_create") },
-    { F.DI_BUTTON, 0, 8, 0, 8, 0, "", "", F.DIF_CENTERGROUP, tr("button_cancel") },
+  -- Описываем структуру колонок для каждого кастомного режима (m3, m4, m5, m6)
+  local m3 = {
+    ColumnTypes = "N,C3,N,C3",
+    ColumnWidths = "0,3,0,3",
+    ColumnTitles = { L.col_title_name, L.col_title_sectors_sz, L.col_title_name, L.col_title_sectors_sz },
+    StatusColumnTypes = "N,C1,C3",
+    StatusColumnWidths = "0,5,3",
+    Flags = 0,
   }
 
-  local hdlg = far.DialogInit(CREATE_EMPTY_TRD_DIALOG_GUID, -1, -1, 77, 11, nil, items, 0, nil)
-  if not hdlg then
-    return nil, "DialogInit failed"
+  local m4 = {
+    ColumnTypes = "C0,C1,C2,C3,C4,C5",
+    ColumnWidths = "0,5,5,3,3,3",
+    ColumnTitles = {
+        L.col_title_name,
+        L.col_title_size,
+        L.col_title_start,
+        L.col_title_sectors_sz,
+        L.col_title_track,
+        L.col_title_sector_st
+    },
+    StatusColumnTypes = "N,C1,C3",
+    StatusColumnWidths = "0,5,3",
+    Flags = 0,
+  }
+
+  local m5 = {
+    ColumnTypes = "C0,C6",
+    ColumnWidths = "12,0",
+    ColumnTitles = { L.col_title_name, L.col_title_description },
+    StatusColumnTypes = "N,C1,C3",
+    StatusColumnWidths = "0,5,3",
+    Flags = 0,
+  }
+
+  local m6 = {
+    ColumnTypes = "C0,C7",
+    ColumnWidths = "12,0",
+    ColumnTitles = { L.col_title_name, L.col_title_comments },
+    StatusColumnTypes = "N,C1,C3",
+    StatusColumnWidths = "0,5,3",
+    Flags = 0,
+  }
+
+  -- Массив режимов для LuaFAR (m3 встает на 4-ю позицию, m4 - на 5-ю)
+  local trd_panel_modes = {
+    {}, {}, {}, m3, m4, m5, m6
+  }
+
+  local host_file = object.archive_path or ""
+  local base_file_name = host_file:match("([^\\/]+)$") or host_file
+  local panel_title = "TRD"
+  if base_file_name ~= "" then
+    panel_title = "TRD:" .. base_file_name
   end
 
-  local ok_run, result = pcall(far.DialogRun, hdlg)
-  if not ok_run then
-    far.DialogFree(hdlg)
-    return nil, tostring(result)
+  -- [[ MULTI-LEVEL DYNAMIC DIRSYS SUBDIRECTORY TITLE GENERATION ]]
+  local current_id = object.current_folder_id or 0
+  local nested_trail = ""
+  if current_id ~= 0 and object.trd_folders then
+    -- Run the upward-walking compiler to resolve deep paths seamlessly
+    nested_trail = compile_nested_folder_path(object.trd_folders, current_id)
+    if nested_trail ~= "" then
+      panel_title = panel_title .. "\\" .. nested_trail
+    end
   end
-  if result == -1 then
-    far.DialogFree(hdlg)
-    return false
-  end
-
-  local index_base = resolve_dialog_index_base_for_overwrite(items, result)
-  local create_button_index = index_base == 0 and 7 or 8
-  if result ~= create_button_index then
-    far.DialogFree(hdlg)
-    return false
-  end
-
-  local path_index = index_base == 0 and 2 or 3
-  local title_index = index_base == 0 and 4 or 5
-  local dirsys_index = index_base == 0 and 5 or 6
-  local path_value = trim_spaces(get_dialog_text(hdlg, path_index))
-  local title_value = get_dialog_text(hdlg, title_index)
-  local install_dirsys = to_bool(far.SendDlgMessage(hdlg, "DM_GETCHECK", dirsys_index, 0))
-  far.DialogFree(hdlg)
 
   return {
-    path_value = path_value,
-    title_value = title_value,
-    install_dirsys = install_dirsys,
+    HostFile         = host_file,
+    Format           = "TR-DOS TRD",
+    PanelTitle       = panel_title,
+    PanelModesArray  = trd_panel_modes,
+    PanelModesNumber = #trd_panel_modes,
+    StartPanelMode   = start_mode_char_code,
+    StartSortMode    = plugin_settings.last_sort_mode,
+    StartSortOrder   = plugin_settings.last_sort_order,
+    Flags            = F.OPIF_ADDDOTS,
+    CurDir           = nested_trail,
   }
 end
 
-local function create_empty_trd_panel()
-  local create_options, options_error = ask_create_empty_trd_options()
-  if create_options == false then
-    return nil
-  end
-  if type(create_options) ~= "table" then
-    far.Message(
-      tr("plugin_menu_create_empty_trd_failed") .. "\n" .. tostring(options_error or "dialog failed"),
-      config.name,
-      nil,
-      "w"
-    )
-    return nil
-  end
+--- Core VFS orchestration callback triggered to mount and open the virtual TRD file list panel.
+---@param open_from integer Native activation context origin code key (maps to standard F.OPEN_*)
+---@param guid string System unique registry 128-bit GUID identification token mapping string
+---@param item any Input parameter object matching signature properties constraints defined by the active OpenFrom origin context mode
+---@return any ret Handled response evaluation result parameter passed right back to the Far Manager core execution layout
+function M.Open(open_from, guid, item)
+    if not item or item == "" then return nil end
 
-  local trimmed_path = path_util.trim(create_options.path_value)
-  if not trimmed_path then
-    return nil
-  end
-  local unquoted_path = path_util.unquote(trimmed_path)
-  local output_path = ensure_trd_extension(unquoted_path)
-  if type(output_path) ~= "string" or output_path == "" then
-    return nil
-  end
-  local full_path = far.ConvertPath(output_path, "CPM_FULL")
-  if type(full_path) ~= "string" or full_path == "" then
-    full_path = output_path
-  end
-  local title_value = create_options.title_value
-  local disk_title, title_error = encode_disk_title(title_value)
-  if type(disk_title) ~= "string" then
-    far.Message(
-      tr("plugin_menu_create_empty_trd_failed") .. "\n" .. tostring(title_error or tr("plugin_menu_create_empty_trd_title_too_long")),
-      config.name,
-      nil,
-      "w"
-    )
-    return nil
-  end
+    if open_from == F.OPEN_ANALYSE then
+        item = item.FileName
+    end
 
-  local install_dirsys = create_options.install_dirsys == true
+    -- Execute safe atomic geometry boundary validations first
+    local is_valid, error_code = trd_reader.is_valid(item)
+    if not is_valid then
+        local token = string.lower(error_code or "err_cannot_open_file")
+        local lang_key = L["trd_" .. token] and ("trd_" .. token) or "err_cannot_open_file"
+        far.Message(L[lang_key], L.m_err_title, L.m_btn_cancel, "w")
+        return nil
+    end
 
-  local packed, pack_error = build_empty_trd_image(disk_title, install_dirsys)
-  if type(packed) ~= "string" then
-    far.Message(tr("plugin_menu_create_empty_trd_failed") .. "\n" .. tostring(pack_error or "pack failed"), config.name, nil, "w")
-    return nil
-  end
+    -- Create the persistent session object instance mapping workspace panel properties
+    local object = {
+        archive_path  = item,
+        format_type   = "trd",
+        files_list    = {},
+        selection_order = {}
+    }
 
-  local session = overwrite_policy.new_session({
-    confirm_overwrite = ask_overwrite_action,
-  })
-  local decision = overwrite_policy.resolve_write_decision(session, full_path)
-  if decision == "cancel" or decision == "skip" then
-    return nil
-  end
+    -- Unpack sectors layout data down to virtual element containers arrays
+    trd_reader.process(object.files_list, item, object)
 
-  local saved, save_error = raw_writer.write_file(full_path, packed)
-  if not saved then
-    far.Message(tr("plugin_menu_create_empty_trd_failed") .. "\n" .. tostring(save_error or "save failed"), config.name, nil, "w")
-    return nil
-  end
+    -- Run the global normalizer pipeline to resolve display name collisions and enrich metadata
+    vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
 
-  if utils.tr_dos_plugin_on_active_panel() then
-    panel.SetActivePanel(nil, 0)
-  end
-
-  local obj = xTRD.panel_factory.from_path(full_path)
-  if obj then
-    return xTRD.panel_module, obj
-  end
-  return nil
+    -- Return the compiled session context object pointer.
+    -- Far Manager core natively transforms this table to construct active VFS frames
+    return object
 end
 
-CommandLine {
-  description = "xTRD: open .trd from command line";
-  prefixes = config.command_prefix;
-  action = function(prefix, text)
-    local obj = xTRD.panel_factory.from_path(text)
-    if obj then
-      return xTRD.panel_module, obj
-    end
-  end;
-}
+--- Compiles, parses and renders files and DirSys directories list with advanced column alignment.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param key_flags integer Native operation mode mask flags passed by Far core (F.OPM_*)
+---@return table[]|nil panel_items Array of PluginPanelItem structures ready to render on screen
+function M.GetFindData(object, handle, key_flags)
+    if not object then return nil end
 
+    -- [[ STAGE 1: LIVE RELOAD CACHE TRANSACTION IF NOT IN BACKGROUND SEARCH ]]
+    if (key_flags & F.OPM_FIND) == 0 then
+        for i = #object.files_list, 1, -1 do
+            object.files_list[i] = nil
+        end
+        -- Re-read actual sectors tracking metrics and re-run detector normalizers
+        trd_reader.process(object.files_list, object.archive_path, object)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+    end
+
+    if not object.current_folder_id then
+        object.current_folder_id = 0
+    end
+
+    -- [[ STAGE 2: DYNAMIC RESOLUTION OF THE C0 COLUMN PHYSICAL CHARACTER WIDTH ]]
+    local c0_width = 0
+    local col_types_str = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
+    local col_widths_str = panel.GetColumnWidths(handle, F.PANEL_ACTIVE)
+
+    if col_types_str and col_widths_str then
+        local next_type = string.gmatch(col_types_str, "([^,]+)")
+        local next_width = string.gmatch(col_widths_str, "([^,]+)")
+
+        while true do
+            local col_type = next_type()
+            local col_width = next_width()
+            if not col_type or not col_width then break end
+
+            col_type = string.match(col_type, "^%s*(.-)%s*$") or col_type
+            if col_type == "C0" then
+                c0_width = tonumber(col_width) or 0
+                break
+            end
+        end
+    end
+
+    local far_items = {}
+
+    -- [[ STAGE 3: RENDER VIRTUALLY GENERATED DIRSYS SUBDIRECTORIES ]]
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            -- Display folders belonging to the current navigation viewport level
+            local is_active_layer = (folder.parent_id == object.current_folder_id)
+            if is_active_layer then
+                local folder_name = folder.display_name or "new_folder"
+
+                -- [[ INTELLECTUAL DELETION BLENDING VIA OBJECT PROPERTY ]]
+                -- Read the native flag parameter strictly from object attributes.
+                -- Remap logically deleted folders into hidden items ("dh")
+                local attr_string = folder.deleted and "dh" or "d"
+
+                table.insert(far_items, {
+                    FileName        = folder_name,
+                    AlternateFileName = "",
+                    FileAttributes  = attr_string,
+                    FileSize        = 0,
+                    AllocationSize  = 0,
+                    _dir_sys_id     = folder.id,
+                    _is_dir_sys     = true,
+
+                    CustomColumnData = {
+                        folder_name,
+                        "", "", "", "", "", "", ""
+                    }
+                })
+            end
+        end
+    end
+
+    -- [[ STAGE 4: RENDER ACTIVE FILES MATCHING THE VIEWPORT LEVEL WITH DETECTOR DATA ]]
+    for idx, hobeta_file in ipairs(object.files_list) do
+        local m = hobeta_file.meta
+        if m and m.display_name then
+            local file_trdos_idx = idx - 1
+
+            local file_parent_id = 0
+            -- Resolve which folder this file belongs to via our parsed file maps registry
+            if object.trd_file_maps then
+                file_parent_id = object.trd_file_maps[file_trdos_idx] or 0
+            end
+            -- Filter constraint: append only items matching current folder viewport level
+            if file_parent_id == object.current_folder_id then
+
+                -- [[ INTELLECTUAL EXTENSION DESIGN RIGGING ]]
+                -- Process exact 3-character virtual extension representation blocks
+                local type_str = ""
+                local ext_str = m.ext or m.type or "C"
+                if string.len(ext_str) == 3 then
+                    type_str = ext_str
+                else
+                    type_str = "<" .. ext_str .. ">"
+                end
+
+                -- Precise whitespace-padding alignment execution inside C0 column space boundaries
+                local combined_name_and_type = ""
+                local raw_name = m.name or ""
+                raw_name = string.match(raw_name, "^%s*(.-)%s*$") or raw_name -- trim edges
+
+                if c0_width > 0 then
+                    local name_len = string.len(raw_name)
+                    local type_len = string.len(type_str)
+                    local spaces_count = c0_width - name_len - type_len
+                    if spaces_count < 1 then spaces_count = 1 end
+                    combined_name_and_type = raw_name .. string.rep(" ", spaces_count) .. type_str
+                else
+                    combined_name_and_type = raw_name .. " " .. type_str
+                end
+
+                -- Assemble enriched descriptive text parameters pulling from the detector layer
+                local desc_str = m.description or ""
+                local meta_str = m.comment or ""
+                if m.author and m.author ~= "" then
+                    if meta_str ~= "" then meta_str = meta_str .. " by " .. m.author
+                    else meta_str = "by " .. m.author end
+                end
+                table.insert(far_items, {
+                    FileName       = m.display_name,
+                    AlternateFileName = "",
+                    FileAttributes = m.deleted and "h" or "",
+                    -- Logical export size maps to standard HoBeta payload structure: 17 bytes header + raw body bytes
+                    FileSize       = 17 + ((m.sectors or 1) * SECTOR_SIZE),
+                    AllocationSize = 17 + ((m.sectors or 1) * SECTOR_SIZE),
+                    _trdos_index   = file_trdos_idx,
+                    _is_dir_sys    = false,
+
+                    -- [[ FILL COMPLETE AUTHORITY CUSTOMCOLUMNDATA CODES ]]
+                    CustomColumnData = {
+                        combined_name_and_type,       -- C0: Smart aligned name + extension
+                        tostring(m.size or 0),        -- C1: Size
+                        tostring(m.start or 0),       -- C2: Start Address
+                        tostring(m.sectors or 1),     -- C3: Sectors Count
+                        tostring(m.track or 1),       -- C4: Start Track index position
+                        tostring(m.sector or 0),      -- C5: Start Sector index position
+                        desc_str,                     -- C6: Advanced Detector description line
+                        meta_str                      -- C7: Author comments / Special signatures tags
+                    }
+                })
+            end
+        end
+    end
+
+    return far_items
+end
+
+--- Handles VFS file tree navigation steps inside DirSys directories layout.
+--- Triggered natively by Far Manager core whenever user changes directories inside the plugin panel.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param dir string Target destination directory path or layout command string (e.g. "..", "\", or folder name)
+---@param op_mode integer Operation mode bitmask flags passed natively by Far Manager (F.OPM_*)
+---@param user_data any Custom user data value passed via panel transaction contexts
+---@return boolean success Returns true/false for navigation updates
+function M.SetDirectory(object, handle, dir, op_mode, user_data)
+    if not object then return false end
+
+    -- Initialize baseline tracking indices registers if missing on context entry
+    if not object.current_folder_id then
+        object.current_folder_id = 0
+    end
+
+    -- Trim boundary spaces from the incoming target directory name string tightly
+    local clean_dir = string.match(dir or "", "^(.-)%s*$") or dir or ""
+
+    -- [[ CASE A: NAVIGATE TO ROOT FILESYSTEM TREE DIRECTORY ]]
+    if clean_dir == "" or clean_dir == "\\" or clean_dir == "/" then
+        object.current_folder_id = 0
+        return true
+    end
+
+    -- [[ CASE B: STEP ONE LEVEL UP IN NAVIGATION HIERARCHY ]]
+    if clean_dir == ".." then
+        if object.current_folder_id == 0 then
+            -- to unmount the active virtual TRD VFS layer and gracefully restore the native OS file panel view
+            return true
+        else
+            -- Locate the active directory element we reside in right now to fetch its native parent index
+            local target_parent_id = 0
+
+            if object.trd_folders then
+                for _, folder in ipairs(object.trd_folders) do
+                    if folder.id == object.current_folder_id then
+                        target_parent_id = folder.parent_id or 0
+                        break
+                    end
+                end
+            end
+
+            -- Seamlessly shift the active navigation viewport up exactly one level bounds
+            object.current_folder_id = target_parent_id
+            return true -- Tell Far Manager to refresh the view via GetFindData
+
+        end
+    end
+
+    -- [[ CASE C: STEP INSIDE A VIRTUAL DIRSYS SUBDIRECTORY ]]
+    -- Scan the cached directories dictionary to resolve matching name tokens IDs
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            -- Verify directory identity matches and check it is not marked as deleted
+            if not folder.deleted and folder.name == clean_dir then
+                -- Perform the stateful hop transition lock live
+                object.current_folder_id = folder.id
+                return true -- Navigation handled successfully, tell Far to re-trigger GetFindData
+            end
+        end
+    end
+
+    -- Fallback safety valve: if target path token was not found inside the active schema, reject execution
+    return false
+end
+
+--- Native Far VFS callback triggered to create new subdirectory nodes inside the panel (F7).
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param dir_name any Target path directory layout
+---@param op_mode integer Operation mode bitmask flags passed natively by Far Manager
+---@return integer result Returns 1 on success, 0 to abort, or -1 if directory exists or loading collapsed
+function M.MakeDirectory(object, handle, dir_name, op_mode)
+    if not object then return 0 end
+
+    -- [[ STEP 1: VERIFY CONFIGURATION CONTROL SHIELD ]]
+    local use_dirsys = plugin_settings and plugin_settings.get("use_dirsys", true)
+    if use_dirsys == nil then use_dirsys = true end
+
+    if not use_dirsys then
+        far.Message(L.trd_err_dirsys_disabled, L.m_err_title, L.m_btn_cancel, "w")
+        return -1
+    end
+
+    -- [[ STEP 2: CHECK FOR EXISTING DIRSYS INSTANCE AND PROMPT INITIALIZATION ]]
+    if not object.trd_folders or not object.trd_file_maps then
+        local msg_buttons = L.m_btn_ok .. ";" .. L.m_btn_cancel
+        local choice = far.Message(L.trd_msg_init_dirsys_body, L.trd_msg_init_dirsys_title, msg_buttons, "w")
+
+        if choice ~= 1 then
+            return -1
+        end
+
+        dir_sys.initialize_empty_system(object)
+    end
+
+    -- [[ STEP 3: SHOW GRAPHICAL STRING INPUT DIALOG WINDOW WITH RIGID NIL PROTECTION ]]
+    local input_path = dir_name
+    if not input_path or input_path == "" then
+        input_path = dialog_manager.show_create_folder_dialog()
+    end
+
+    -- [[ CRITICAL FIX 1: SECURE ATOMIC SHIELD AGAINST NIL STRINGS COMPARISONS ]]
+    -- Instantly halt execution if user pressed Escape/Cancel inside show_create_folder_dialog
+    if not input_path or input_path == "" then
+        return -1
+    end
+
+    -- [[ STEP 4: PARSE AND ITERATE NESTED SECTIONS PATH CHUNKS WITH HONEST STEP-DOWN ]]
+    -- Secure the starting operational folder node ID position context
+    local active_parent_id = object.current_folder_id or 0
+    local is_tree_changed = false
+
+    -- Loop across delimited string layout segments sequentially (e.g. "GAMES\ACTION\CHESS")
+    for segment in string.gmatch(input_path, "[^\\]+") do
+        segment = string.match(segment, "^(.-)%s*$") or segment
+
+        if segment ~= "" then
+            -- Normalize and pad string up to standard DirSys 11 character limits requirements
+            local normalized_name = string.sub(segment, 1, 11)
+
+            local resolved_folder_id = nil
+            if object.trd_folders then
+                for _, existing_folder in ipairs(object.trd_folders) do
+                    -- Enforce strict dual bounds: parent link must match current loop tier, name must match
+                    if not existing_folder.deleted and
+                       existing_folder.parent_id == active_parent_id and
+                       existing_folder.name == normalized_name then
+
+                        resolved_folder_id = existing_folder.id
+                        break
+                    end
+                end
+            end
+
+            -- If the folder is missing at this specific level, create it cleanly
+            if not resolved_folder_id then
+                -- DirSys permits a hard architectural ceiling limit of 127 folders total
+                local next_id = #object.trd_folders + 1
+                if next_id > 127 then
+                    far.Message(L.trd_err_dirsys_limit, L.m_err_title, L.m_btn_cancel, "w")
+                    return 0
+                end
+                local new_node = {
+                    id        = next_id,
+                    name      = normalized_name,
+                    parent_id = active_parent_id, -- [[ STRICLY LINKED TO THE ACTIVE LEVEL TIER ]]
+                    deleted   = false
+                }
+                table.insert(object.trd_folders, new_node)
+                resolved_folder_id = next_id
+                is_tree_changed = true
+            end
+
+            -- Shift pointer downward to use the newly found/created folder's ID as the parent for the NEXT segment!
+            active_parent_id = resolved_folder_id
+        end
+    end
+
+    -- [[ STEP 5: PHYSICAL FLUSH REWRITE TRANSACTIONS CASCASE ]]
+    if is_tree_changed then
+        local commit_success = trd_writer.save(object.archive_path, object.files_list, object, false)
+        if not commit_success then
+            far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
+            return 0
+        end
+    end
+
+    -- Force low-level frame update queues triggers to surface updates on screens lists rows
+    panel.UpdatePanel(handle, F.PANEL_ACTIVE)
+    panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+    return 1
+end
+
+local trd_writer = require("theX.formats.trd.writer")
+
+--- Collects all nested subdirectory IDs under the specified target folder nodes recursively.
+---@param folders table[] Cached list array of active DirSys directories mapping properties
+---@param initial_delete_ids table<integer, boolean> Lookup hash set containing folder IDs selected for deletion
+---@return table<integer, boolean> cascade_delete_ids Complete populated lookup map of all target deleted catalog IDs
+local function collect_cascade_folder_ids(folders, initial_delete_ids)
+    local deleted_map = {}
+    for id, state in pairs(initial_delete_ids) do
+        deleted_map[id] = state
+    end
+
+    local scan_needed = true
+    -- Loop down the tree layout branches layer by layer until no more children are gathered
+    while scan_needed do
+        scan_needed = false
+        for _, folder in ipairs(folders) do
+            local f_id = folder.id
+            local p_id = folder.parent_id or 0
+
+            -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
+            -- If parent folder is already marked for deletion, but child isn't collected yet
+            if deleted_map[p_id] and not deleted_map[f_id] and not folder.deleted then
+                deleted_map[f_id] = true
+                scan_needed = true -- Trigger another deep scan iteration loop sweep
+            end
+        end
+    end
+
+    return deleted_map
+end
+
+--- Native Far Manager VFS callback triggered whenever a user attempts to delete items (F8).
+--- Supports full deep cascading tree deletion for DirSys folders and target sub-assets.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param panel_items tPluginPanelItem[] Sequential array containing items checked or focused for deletion
+---@param op_mode integer Operation mode bitmask flags passed natively by Far Manager core (F.OPM_*)
+---@return boolean success Returns true if deletion was handled successfully, false to abort
+function M.DeleteFiles(object, handle, panel_items, op_mode)
+    if not object or not panel_items or #panel_items == 0 then return false end
+
+    -- [[ STAGE 1: USER CONFIRMATION DIALOG INTERCEPT ]]
+    if (op_mode & F.OPM_SILENT) == 0 then
+        local msg_buttons = L.m_btn_ok .. ";" .. L.m_btn_cancel
+        local choice = far.Message(L.trd_dlg_delete_confirm, L.trd_dlg_delete_title, msg_buttons, "w")
+        if choice ~= 1 then return false end
+    end
+    local is_state_mutated = false
+    local folder_ids_to_delete = {}
+    local files_to_delete = {}
+
+    -- [[ STAGE 2: INITIAL HARVESTING OF SELECTED TARGETS ]]
+    for _, item in ipairs(panel_items) do
+        local filename = item.FileName
+        local attr_str = item.FileAttributes or ""
+        local is_dir = string.match(attr_str, "d") ~= nil
+
+        if is_dir then
+            if object.trd_folders then
+                for _, folder in ipairs(object.trd_folders) do
+                    -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
+                    -- Identify selected folder currently focused inside active workspace layer viewport
+                    if not folder.deleted and
+                       folder.parent_id == object.current_folder_id and
+                       folder.name == filename then
+
+                        folder_ids_to_delete[folder.id] = true
+                        break
+                    end
+                end
+            end
+        else
+            -- Queue files immediately using standard target index lookups
+            table.insert(files_to_delete, item)
+        end
+    end
+
+    -- [[ STAGE 3: EXECUTE CASCADE EVALUATION DOWN FOR SUB-DIRECTORIES ]]
+    if object.trd_folders and next(folder_ids_to_delete) then
+        -- Run the tree-walking crawler to collect all child folder IDs down to the leaf nodes
+        folder_ids_to_delete = collect_cascade_folder_ids(object.trd_folders, folder_ids_to_delete)
+
+        -- Apply soft 0x01 deletion markers and logical flags to all collected directories nodes
+        for _, folder in ipairs(object.trd_folders) do
+            -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
+            if folder_ids_to_delete[folder.id] and not folder.deleted then
+                folder.name = string.char(0x01) .. string.sub(folder.name, 2)
+                folder.deleted = true
+                is_state_mutated = true
+            end
+        end
+    end
+
+    -- [[ STAGE 4: PROCESS FILES MARKED DIRECTLY AND INDIRECTLY VIA CASCADE LOOKUPS ]]
+    if object.files_list then
+        for idx, hobeta_file in ipairs(object.files_list) do
+            local m = hobeta_file.meta
+            -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
+            if m and not m.deleted then
+                local file_trdos_idx = idx - 1
+
+                -- Resolve file parent directory container index position
+                local file_parent_id = 0
+                if object.trd_file_maps and object.trd_file_maps[file_trdos_idx] then
+                    file_parent_id = object.trd_file_maps[file_trdos_idx]
+                end
+
+                -- Match if file is contained inside any nested directories slated for deletion
+                local is_orphaned_by_cascade = folder_ids_to_delete[file_parent_id] == true
+
+                -- Check if file was explicitly selected by user highlights rows
+                local is_explicitly_selected = false
+                for _, f_item in ipairs(files_to_delete) do
+                    if f_item._trdos_index == file_trdos_idx or (not f_item._trdos_index and m.display_name == f_item.FileName) then
+                        is_explicitly_selected = true
+                        break
+                    end
+                end
+
+                -- If file triggers any execution boundaries rules conditions, perform soft delete sequence
+                if is_explicitly_selected or is_orphaned_by_cascade then
+                    local raw_trdos_name = m.name or ""
+                    m.name = string.char(0x01) .. string.sub(raw_trdos_name, 2)
+                    m.deleted = true
+
+                    if object.trd_info then
+                        object.trd_info.deleted_files = (object.trd_info.deleted_files or 0) + 1
+                    end
+                    is_state_mutated = true
+                end
+            end
+        end
+    end
+
+    -- [[ STAGE 5: PHYSICAL TRANSACTION COMMIT LOCK ]]
+    if is_state_mutated then
+        local flush_success = trd_writer.save(object.archive_path, object.files_list, object, true)
+        if flush_success then
+            panel.UpdatePanel(handle, F.PANEL_ACTIVE)
+            panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+            return true
+        else
+            far.Message(L.trd_err_delete_failed, L.m_err_title, L.m_btn_cancel, "w")
+            return false
+        end
+    end
+
+    return false
+end
+
+function M.Analyse(data)
+    return data.FileName:lower():match("%.trd$") ~= nil
+end
+
+---@param object table The plugin instance table
+---@param handle userdata The low-level Far Manager panel handle
+---@param event integer The event code passed by Far Manager (F.FE_*)
+---@param param any Additional event parameter data
+---@return boolean handled Returns true if the plugin fully processed the event, false otherwise
+function M.ProcessPanelEvent(object, handle, event, param)
+    -- ПРАВИЛО: Ловим событие смены режима панели (Ctrl+3 - Ctrl+6)
+    if event == F.FE_CHANGEVIEWMODE then
+        -- Принудительно заставляем Far Manager сбросить кэш CustomColumnData
+        -- Третий аргумент true заставляет ядро полностью зачистить старые строки C0
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        return true -- Событие успешно обработано
+    -- elseif event == F.FE_REDRAW then
+    --     local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
+    --     local panel_mode = panel_info.ViewMode
+    --     if panel_mode == 4 then
+    --         panel.UpdatePanel(nil, F.PANEL_ACTIVE, true)
+    --         -- panel.RedrawPanel(nil, F.PANEL_ACTIVE)
+    --         return false
+    --     end
+    --     return false
+    end
+
+    return false
+end
+
+
+function M.ClosePanel(object, handle)
+    -- Вызываем GetPanelInfo СТРОГО с одним аргументом, как в оригинале!
+    local info = panel.GetPanelInfo(handle)
+
+    if info then
+        plugin_settings.last_panel_mode = info.ViewMode
+        plugin_settings.last_sort_mode = info.SortMode
+
+        -- Сверяем флаги с использованием правильной константы PFLAGS_REVERSESORTORDER
+        if info.Flags and F.PFLAGS_REVERSESORTORDER then
+            plugin_settings.last_sort_order = (info.Flags & F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
+        else
+            plugin_settings.last_sort_order = 0
+        end
+
+        -- Физически пишем плоские данные в реестр макросов
+        plugin_settings.save_settings()
+    end
+end
+
+
+-- [[ DECLARATIVE LUA_FAR INTERFACE INTEGRATION LAYER ]]
 MenuItem {
-  menu = "Plugins";
-  area = "Shell";
-  guid = config.menu_item_guid;
-  text = tr("plugin_menu_title");
-  action = function()
-    local menu_items = {
-      { text = tr("plugin_menu_open_trd"), action = "open_trd" },
-      { text = tr("plugin_menu_create_empty_trd"), action = "create_empty_trd" },
-    }
-    local selected_item, selected_pos = far.Menu(
-      {
-        Title = tr("plugin_menu_title"),
-        SelectIndex = 1,
-      },
-      menu_items
-    )
-    if not selected_item and not selected_pos then
-      return nil
+    menu   = "Plugins",
+    area   = "Shell",
+    guid   = "8C9D0E1F-A2B3-4C5D-6E7F-8A9B0C1D2E3F",
+    text   = L.m_trd_menu_title,
+    action = function()
+        -- Query active viewport parameters safely via canonical nil-handle API
+        local p_info = panel.GetPanelInfo(nil, 1)
+
+        -- Run hierarchical context walking chain to check if inside a TRD VFS session
+        local active_module_guid = nil
+        if p_info and p_info.PluginObject and p_info.PluginObject.module and p_info.PluginObject.module.Info then
+            active_module_guid = p_info.PluginObject.module.Info.Guid
+        end
+        -- Boolean condition tracking whether the currently focused pane is our native TRD VFS panel
+        local is_trd_active_panel = (active_module_guid == win.Uuid("B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D"))
+
+        local menu_properties = {
+            X     = -1,
+            Y     = -1,
+            Flags = F.FMENU_AUTOHIGHLIGHT,
+            Title = L.m_plugin_menu_title,
+            Id    = "F8E7D6C5-B4A3-2B1C-0D1E-2F3A4B5C6D7E"
+        }
+
+        -- [[ INTELLECTUAL DYNAMIC SUBMENU INTERFACE BLOCK ]]
+        -- Replaced flat visibility constraints with explicit conditional disable/grayed properties!
+        local menu_items = {
+            {
+                text    = L.m_menu_trd_move,
+                -- Disable compaction operation unless user is currently inside an opened TRD container view
+                disable = not is_trd_active_panel,
+                grayed  = not is_trd_active_panel
+            },
+            {
+                text    = L.m_menu_trd_create,
+            }
+        }
+
+        local chosen_item, chosen_pos = far.Menu(menu_properties, menu_items)
+        if not chosen_pos then return nil end
+
+        -- [[ ROUTING INTERNAL SELECTIONS ACTION EXECUTION ]]
+        if chosen_pos == 1 and is_trd_active_panel then
+            -- Double check protection to bypass macro injections bounds drops
+            execute_trdos_move_compaction(p_info.PluginObject.object, nil)
+
+        elseif chosen_pos == 2 then
+            -- [[ ACTION 2: TRD FILE GENERATOR FALLBACK PLACEHOLDER ]]
+            far.Message(L.trd_msg_not_implemented, L.m_menu_trd_create, L.m_btn_ok, "i")
+        end
+
+        return nil
+    end}
+
+-- [[ DECLARATIVE LUA_FAR CONFIGURATION REGISTRY LINK ]]
+MenuItem {
+    -- [[ CRITICAL FIX: PLACE STRICKLY INSIDE OPTIONS -> PLUGINS CONFIGURATION MENU ]]
+    menu   = "Config",
+    area   = "Shell",
+    -- Persistent unique RFC 4122 Version 4 UUID tracking registered specifically for our TRD VFS component
+    guid   = "B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D",
+    text   = L.m_trd_menu_title, -- "TRD Image Options" / "Настройки TRD образов"
+    action = function()
+        -- Load the most up-to-date states entries context maps straight from database
+        -- We assume plugin_settings for TRD context is required or instantiated locally at the top
+        plugin_settings.load_settings()
+
+        -- Fetch the active boolean parameter state layer
+        local current_use_dirsys = plugin_settings.get("use_dirsys", true)
+
+        -- Trigger the standalone modular graphical window interface from our decoupled manager layer
+        local updated_state = dialog_manager.show_trd_settings_dialog(current_use_dirsys)
+
+        if updated_state ~= nil then
+            -- Commit modifications live using our transactional pairs-based dynamic write helper
+            plugin_settings.set("use_dirsys", updated_state)
+        end
+
+        return nil
     end
-    local selected_action = type(selected_item) == "table" and selected_item.action or nil
-    if selected_action == nil and type(selected_pos) == "number" then
-      local fallback_item = menu_items[selected_pos]
-      selected_action = type(fallback_item) == "table" and fallback_item.action or nil
-    end
-    if selected_action == "open_trd" then
-      return open_current_trd_panel()
-    end
-    if selected_action == "create_empty_trd" then
-      return create_empty_trd_panel()
-    end
-  end;
 }
 
-PanelModule(xTRD.panel_module)
+
+PanelModule(M)

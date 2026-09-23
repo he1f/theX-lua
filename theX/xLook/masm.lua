@@ -55,12 +55,6 @@ function ByteCursor:take(count)
   return chunk
 end
 
-local function parse_le16(value, index)
-  local low = string.byte(value, index) or 0
-  local high = string.byte(value, index + 1) or 0
-  return low + high * 256
-end
-
 local function token_by_byte(byte_value)
   return tokens[(byte_value - 0x80) + 1] or "?"
 end
@@ -155,34 +149,6 @@ function Masm:_decode_payload(payload_cursor)
     end
   end
   return table.concat(line, "")
-end
-
-function Masm.decode(raw_hobeta_bytes)
-  if type(raw_hobeta_bytes) ~= "string" or #raw_hobeta_bytes <= 17 then
-    local error_msg = "invalid Hobeta payload"
-    return nil, error_msg
-  end
-
-  local header_type_byte = string.byte(raw_hobeta_bytes, 9)
-  if type(header_type_byte) ~= "number" then
-    local error_msg = "invalid Hobeta header type"
-    return nil, error_msg
-  end
-
-  local header_type = string.char(header_type_byte)
-  local header_start = parse_le16(raw_hobeta_bytes, 10)
-  local header_length = parse_le16(raw_hobeta_bytes, 12)
-  local body_bytes = string.sub(raw_hobeta_bytes, 18)
-
-  local Decoder = Masm.new(body_bytes, header_type, header_start, header_length)
-  local detected, assembler_name = Decoder:detect()
-  if not detected then
-    local error_msg = "file is not MASM format"
-    return nil, error_msg
-  end
-
-  local text = Decoder:get_text()
-  return text, nil, assembler_name
 end
 
 return Masm

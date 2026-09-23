@@ -22,12 +22,6 @@ local SPACES_CTRL = 0x06
 local TOKEN_CODE_MIN = 0x20
 local TOKEN_CODE_MAX = 0xC5
 
-local function parse_le16(value, index)
-  local low = string.byte(value, index) or 0
-  local high = string.byte(value, index + 1) or 0
-  return low + high * 256
-end
-
 local function is_bit_set(number, bit_index)
   local num = tonumber(number) or 0
   local bit = tonumber(bit_index) or 0
@@ -148,34 +142,6 @@ function ZxAsm:get_text()
   end
 
   return table.concat(lines, "\n")
-end
-
-function ZxAsm.decode(raw_hobeta_bytes)
-  if type(raw_hobeta_bytes) ~= "string" or #raw_hobeta_bytes <= 17 then
-    local error_msg = "invalid Hobeta payload"
-    return nil, error_msg
-  end
-
-  local header_type_byte = string.byte(raw_hobeta_bytes, 9)
-  if type(header_type_byte) ~= "number" then
-    local error_msg = "invalid Hobeta header type"
-    return nil, error_msg
-  end
-
-  local header_type = string.char(header_type_byte)
-  local header_start = parse_le16(raw_hobeta_bytes, 10)
-  local header_length = parse_le16(raw_hobeta_bytes, 12)
-  local body_bytes = string.sub(raw_hobeta_bytes, 18)
-
-  local Decoder = ZxAsm.new(body_bytes, header_type, header_start, header_length)
-  local detected, assembler_name = Decoder:detect()
-  if not detected then
-    local error_msg = "file is not ZxAsm format"
-    return nil, error_msg
-  end
-
-  local text = Decoder:get_text()
-  return text, nil, assembler_name
 end
 
 return ZxAsm

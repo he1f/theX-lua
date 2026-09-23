@@ -1,12 +1,6 @@
 local Tasm2 = {}
 Tasm2.__index = Tasm2
 
-local function parse_le16(value, index)
-  local low = string.byte(value, index) or 0
-  local high = string.byte(value, index + 1) or 0
-  return low + high * 256
-end
-
 function Tasm2.new(body_bytes, header_type, header_start, header_length)
   local Object = {
     _body = body_bytes or "",
@@ -66,34 +60,6 @@ function Tasm2:get_text()
   end
 
   return table.concat(lines, "\n")
-end
-
-function Tasm2.decode(raw_hobeta_bytes)
-  if type(raw_hobeta_bytes) ~= "string" or #raw_hobeta_bytes <= 17 then
-    local error_msg = "invalid Hobeta payload"
-    return nil, error_msg
-  end
-
-  local header_type_byte = string.byte(raw_hobeta_bytes, 9)
-  if type(header_type_byte) ~= "number" then
-    local error_msg = "invalid Hobeta header type"
-    return nil, error_msg
-  end
-
-  local header_type = string.char(header_type_byte)
-  local header_start = parse_le16(raw_hobeta_bytes, 10)
-  local header_length = parse_le16(raw_hobeta_bytes, 12)
-  local body_bytes = string.sub(raw_hobeta_bytes, 18)
-
-  local Decoder = Tasm2.new(body_bytes, header_type, header_start, header_length)
-  local detected, assembler_name = Decoder:detect()
-  if not detected then
-    local error_msg = "file is not TASM 2.0 format"
-    return nil, error_msg
-  end
-
-  local text = Decoder:get_text()
-  return text, nil, assembler_name
 end
 
 return Tasm2

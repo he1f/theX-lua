@@ -27,12 +27,6 @@ local LPAREN = string.byte("(")
 local RPAREN = string.byte(")")
 local QUOTE = string.byte("\"")
 
-local function parse_le16(value, index)
-  local low = string.byte(value, index) or 0
-  local high = string.byte(value, index + 1) or 0
-  return low + high * 256
-end
-
 local function russian(number)
   if number >= 0x10 and number <= 0x1F then
     return russian_part1[number - 0x10 + 1]
@@ -300,32 +294,6 @@ function Xas:_append_ascii_token(cursor, line, first_byte)
     byte_value = cursor:read()
   end
   return byte_value
-end
-
-function Xas.decode(raw_hobeta_bytes)
-  if type(raw_hobeta_bytes) ~= "string" or #raw_hobeta_bytes <= 17 then
-    local error_msg = "invalid Hobeta payload"
-    return nil, error_msg
-  end
-
-  local header_type_byte = string.byte(raw_hobeta_bytes, 9)
-  if type(header_type_byte) ~= "number" then
-    local error_msg = "invalid Hobeta header type"
-    return nil, error_msg
-  end
-  local header_type = string.char(header_type_byte)
-  local header_start = parse_le16(raw_hobeta_bytes, 10)
-
-  local body_bytes = string.sub(raw_hobeta_bytes, 18)
-  local Decoder = Xas.new(body_bytes)
-  local detected, assembler_name = Decoder:detect(header_type, header_start)
-  if not detected then
-    local error_msg = "file is not XAS format"
-    return nil, error_msg
-  end
-
-  local text = Decoder:get_text()
-  return text, nil, assembler_name
 end
 
 return Xas

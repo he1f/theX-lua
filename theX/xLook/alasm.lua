@@ -30,6 +30,7 @@ local registry = {
 }
 
 local OFFSET = 9 + 0x18 + 2 + 2 + 1 + 1 + 1
+-- local OFFSET = 9 + 0x18 + 2 + 2 + 1
 local SIGNATURE = { 0xF3, 0x76, 0xC7, 0xDD, 0xFD, 0xED, 0xB0, 0xD9 }
 
 local function to_str(byte_value, russian)
@@ -64,7 +65,7 @@ local function make_line_state()
 end
 
 local function get_byte(data, zero_based_index)
-  return string.byte(data, zero_based_index + 1)
+  return string.byte(data, zero_based_index+1)
 end
 
 local function get_slice(data, start_zero, end_zero_exclusive)
@@ -92,16 +93,15 @@ function Alasm:detect()
 end
 
 function Alasm:get_text()
-  local offset = OFFSET + 8 + 16
+  local offset = OFFSET + 8 + 16 - 1
   local result_lines = {}
 
   while true do
-    local line_len = get_byte(self._body, offset) or 0
+    local line_len = get_byte(self._body, offset + 1) or 0
     if line_len == 0 then
       break
     end
-
-    local encoded_line = get_slice(self._body, offset + 1, offset + line_len)
+    local encoded_line = get_slice(self._body, offset + 2, offset + line_len + 1)
     result_lines[#result_lines + 1] = self:_decode_line(encoded_line)
     offset = offset + line_len
   end
@@ -238,24 +238,6 @@ function Alasm:_resolve_secondary_token(byte_value)
   end
 
   return nil
-end
-
-function Alasm.decode(raw_hobeta_bytes)
-  if type(raw_hobeta_bytes) ~= "string" or #raw_hobeta_bytes <= 17 then
-    local error_msg = "invalid Hobeta payload"
-    return nil, error_msg
-  end
-
-  local body_bytes = string.sub(raw_hobeta_bytes, 18)
-  local Decoder = Alasm.new(body_bytes)
-  local detected, assembler_name = Decoder:detect()
-  if not detected then
-    local error_msg = "file is not Alasm format"
-    return nil, error_msg
-  end
-
-  local text = Decoder:get_text()
-  return text, nil, assembler_name
 end
 
 return Alasm
