@@ -12,7 +12,7 @@ local function assign_meta(m, pc_ext)
     local clean = string.match(pc_ext, "^%s*(.-)%s*$") or pc_ext
     if string.len(clean) == 3 then
         m.type = string.sub(clean, 1, 1)
-        m.start = (string.byte(clean, 2) * 256) + string.byte(clean, 3)
+        m.start = (string.byte(clean, 3) * 256) + string.byte(clean, 2)
         m.ext = pc_ext
     else
         m.type = string.sub(clean, 1, 1) or "C"

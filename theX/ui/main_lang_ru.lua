@@ -74,4 +74,32 @@ return {
     io_btn_overwrite_all      = "Перезаписать Все",
     io_btn_skip_all           = "Пропустить Все",
 
+    trd_err_put_dirsys_disabled = "Невозможно импортировать директории. Расширение каталогов DirSys отключено.",
+    trd_err_max_files_limit   = "Ошибка: Превышен лимит файлов в TRD (Разрешено максимум 128 файлов).",
+    trd_err_max_folders_limit = "Ошибка: Превышен лимит каталогов DirSys (Разрешено максимум 127 папок).",
+    trd_err_disk_full         = "Ошибка: Недостаточно свободного места на TRD образе.\nТребуется: %d сект., Доступно: %d сект.",
+    trd_title_import_err      = "Ошибка импорта",
+
+    -- [[ INFOLINES SECTION TITLES ]]
+    info_sec_files            = "Информация о файлах",
+    info_sec_dirsys           = "Информация о папках",
+    info_sec_space            = "Свободное пространство",
+
+    -- [[ INFOLINES METRICS LABELS ]]
+    info_lbl_label            = "Метка диска:",
+    info_lbl_type             = "Тип диска:",
+    info_lbl_write_protect    = "Защита от записи:",
+    info_lbl_wp_active        = "Да (Образ защищён / RO)",
+    info_lbl_wp_inactive      = "Нет (Доступна запись / RW)",
+    info_lbl_total_files      = "Всего активных файлов:",
+    info_lbl_deleted_files    = "Удалённых файлов:",
+    info_lbl_dirsys_status    = "Статус DirSys:",
+    info_lbl_dirsys_present   = "Инициализирована",
+    info_lbl_dirsys_absent    = "Отсутствует / Отключена",
+    info_lbl_total_folders    = "Всего активных папок:",
+    info_lbl_deleted_folders  = "Удалённых папок:",
+    info_lbl_free_track       = "Первый свободный трек:",
+    info_lbl_free_sector      = "Первый свободный сектор:",
+    info_lbl_free_sectors_qty = "Свободно секторов:",
+
 }

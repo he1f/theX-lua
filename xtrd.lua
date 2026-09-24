@@ -5,14 +5,20 @@ end
 local script_dir = macro_file:match("^(.*[\\/])") or ""
 package.path = script_dir .. "?\\init.lua;" .. script_dir .. "?.lua;" .. package.path
 
+local ffi = require("ffi")
 local F = far.Flags
 local L = require("theX.ui.localization")
 local trd_reader = require("theX.formats.trd.reader")
 local dir_sys = require("theX.formats.trd.dir_sys")
 local trd_writer = require("theX.formats.trd.writer")
+local scl_writer = require("theX.formats.scl.writer")
 local vfs_core = require("theX.trdos_vfs_core")
 local detector = require("theX.detector")
 local dialog_manager = require("theX.dialog.manager")
+local gui = require("theX.utils.gui_operations")
+local io_manager = require("theX.io_manager")
+local encoder = require("theX.utils.encoding")
+local loader  = require("theX.formats.loader")
 
 local settings_manager = require("theX.settings_manager")
 local plugin_settings = settings_manager.new("xtrd")
@@ -179,6 +185,100 @@ local function execute_trdos_move_compaction(object, handle)
     end
 end
 
+-- [[ M.PutFiles -> Stage 1: Hierarchical PC Source Importer Utility ]]
+
+--- Traverses the local Windows filesystem tree layout, dynamically registering new DirSys folder nodes
+--- and preparing standalone queue structures for structural files allocation loops.
+---@param object table The active parent plugin panel context mapping states
+---@param pc_root_path string Full absolute host filesystem pathway where the target folder resides
+---@param target_parent_id integer The unique virtual directory ID code inside which assets are dropped
+---@param temp_folders table[] Temporary working array cloning active DirSys subdirectories states
+---@param import_queue table Array container to accumulate prepared file import metadata tracks
+---@return boolean success Returns true if the path structural tree was compiled without boundaries failures
+local function harvest_pc_import_tree(object, pc_root_path, target_parent_id, temp_folders, import_queue)
+    local win_flags = 0 -- Default standard behavior for far.RecursiveSearch execution
+
+    -- Leverage the native Far core background unmanaged filesystem crawler engine
+    far.RecursiveSearch(pc_root_path, "*", function(search_item, full_search_path)
+        local attr_str = search_item.FileAttributes or ""
+        local is_dir = string.match(attr_str, "d") ~= nil
+
+        -- [[ RESOLVE DYNAMIC RELATIVE PATH SEGMENTS TO CONSTRUCT DIRSYS VIRTUAL TIERS ]]
+        -- Extract the inner trailing structural pathway excluding the base root path ceiling boundaries
+        local slice_start = string.len(pc_root_path) + 2
+        local inner_relative_trail = string.sub(full_search_path, slice_start)
+
+        -- Secure the base working context link pointer tracking back to parent execution levels
+        local active_layer_parent_id = target_parent_id
+
+        if inner_relative_trail ~= "" then
+            -- Walk through every nested subdirectory token layer by layer (e.g. "GAMES\ACTION")
+            for segment in string.gmatch(inner_relative_trail, "[^\\]+") do
+                local is_segment_dir = false
+
+                -- Check if the current processed segment chunk represents a physical directory path on disk
+                if is_dir and inner_relative_trail:match(segment .. "$") then
+                    is_segment_dir = true
+                elseif inner_relative_trail:match(segment .. "\\") then
+                    is_segment_dir = true
+                end
+
+                if is_segment_dir then
+                    -- Clean up, capitalize and pad the segment chunk straight into pure TR-DOS CP866 bytes
+                    local clean_seg = string.gsub(segment, "[\\/%:%*%?\"<>|]", "_")
+                    local normalized = string.upper(clean_seg)
+                    local cp866_seg_name = encoder.utf8_to_cp866(normalized)
+
+                    cp866_seg_name = string.sub(cp866_seg_name, 1, 11)
+                    if string.len(cp866_seg_name) < 11 then
+                        cp866_seg_name = cp866_seg_name .. string.rep(" ", 11 - string.len(cp866_seg_name))
+                    end
+
+                    -- Search if this exact folder token exists inside our transient working registry array
+                    local found_folder_id = nil
+                    for _, folder in ipairs(temp_folders) do
+                        if not folder.deleted and folder.parent_id == active_layer_parent_id and folder.name == cp866_seg_name then
+                            found_folder_id = folder.id
+                            break
+                        end
+                    end
+
+                    -- If missing, dynamically append the fresh folder block enforcing DirSys 127 boundaries ceiling
+                    if not found_folder_id then
+                        local next_f_id = #temp_folders + 1
+                        if next_f_id > 127 then
+                            return true -- Instantly signals callback to drop out of far.RecursiveSearch loops
+                        end
+
+                        table.insert(temp_folders, {
+                            id        = next_f_id,
+                            name      = cp866_seg_name,
+                            parent_id = active_layer_parent_id,
+                            deleted   = false
+                        })
+                        found_folder_id = next_f_id
+                    end
+
+                    -- Shift the parent tracking pointer down into the newly matched/created directory node ID
+                    active_layer_parent_id = found_folder_id
+                end
+            end
+        end
+
+        -- [[ ALLOCATE AND INTERCEPT FILES ENTRIES TO PACK INTO LOADERS QUEUES ]]
+        if not is_dir then
+            table.insert(import_queue, {
+                pc_file_path = full_search_path,
+                virtual_parent_id = active_layer_parent_id
+            })
+        end
+
+        return nil -- Return nil to instruct Far core crawler to continue scanning tracks sequentially
+    end, win_flags)
+
+    return true
+end
+
 -- Публичный неймспейс плагина (сюда пишем ТОЛЬКО экспортируемые методы)
 local M = {}
 
@@ -272,6 +372,81 @@ function M.GetOpenPanelInfo(object, handle)
     end
   end
 
+    -- [[ Inside theX/formats/trd/init.lua -> M.GetOpenPanelInfo method ]]
+
+    local lines = {}
+
+    if object then
+        local disk_info = object.trd_info or {}
+
+        -- [[ SECTION 1: DYNAMIC PHYSICAL WRITE PROTECTION ENFORCEMENT CHECK ]]
+        local is_read_only = false
+        if object.archive_path then
+            local file_attributes = win.GetFileInfo(object.archive_path)
+            if file_attributes and string.find(file_attributes.FileAttributes or "", "r") then
+                is_read_only = true
+            end
+        end
+
+        local type_mapping = {
+            [0x16] = "80 Tracks, DS (640 KB)",
+            [0x17] = "40 Tracks, DS (320 KB)",
+            [0x18] = "80 Tracks, SS (320 KB)",
+            [0x19] = "40 Tracks, SS (160 KB)",
+        }
+        local raw_type_byte = disk_info.disk_type or 0x19
+        local type_string_resolved = type_mapping[raw_type_byte] or string.format("Unknown (0x%02X)", raw_type_byte)
+        local label = string.match(disk_info.label, "^(.-)[%s%z]*$") or "EMPTY"
+        table.insert(lines, { Text = L.info_lbl_label, Data = label })
+        table.insert(lines, { Text = L.info_lbl_type, Data = type_string_resolved })
+        table.insert(lines, { Text = L.info_lbl_write_protect, Data = is_read_only and L.info_lbl_wp_active or L.info_lbl_wp_inactive })
+
+        -- [[ SECTION 2: FILE SYSTEM COUNTERS INFRASTRUCTURE ]]
+        local active_files_qty = 0
+        if object.files_list then
+            for _, f in ipairs(object.files_list) do
+                if f.meta and not f.meta.deleted then
+                    active_files_qty = active_files_qty + 1
+                end
+            end
+        end
+
+        table.insert(lines, { Text = L.info_sec_files, Data = "", Flags = F.IPLFLAGS_SEPARATOR })
+        table.insert(lines, { Text = L.info_lbl_total_files, Data = tostring(active_files_qty) })
+        table.insert(lines, { Text = L.info_lbl_deleted_files, Data = tostring(disk_info.deleted_files or 0) })
+
+        -- [[ SECTION 3: DIRSYS SUBDIRECTORIES HIERARCHY EVALUATOR ]]
+        table.insert(lines, { Text = L.info_sec_dirsys, Data = "", Flags = F.IPLFLAGS_SEPARATOR })
+
+        if object.trd_folders and object.trd_file_maps then
+            local active_folders_qty = 0
+            local deleted_folders_qty = 0
+
+            for _, folder in ipairs(object.trd_folders) do
+                if folder.deleted then
+                    deleted_folders_qty = deleted_folders_qty + 1
+                else
+                    active_folders_qty = active_folders_qty + 1
+                end
+            end
+
+            table.insert(lines, { Text = L.info_lbl_dirsys_status, Data = L.info_lbl_dirsys_present })
+            table.insert(lines, { Text = L.info_lbl_total_folders, Data = tostring(active_folders_qty) })
+            table.insert(lines, { Text = L.info_lbl_deleted_folders, Data = tostring(deleted_folders_qty) })
+        else
+            table.insert(lines, { Text = L.info_lbl_dirsys_status, Data = L.info_lbl_dirsys_absent })
+        end
+
+        -- [[ SECTION 4: GEOMETRY & SPACE ALLOCATION METRICS ]]
+        local free_sectors_count = disk_info.initial_free or 0
+
+        table.insert(lines, { Text = L.info_sec_space, Data = "", Flags = F.IPLFLAGS_SEPARATOR })
+        table.insert(lines, { Text = L.info_lbl_free_track, Data = tostring(disk_info.next_free_track or 1) })
+        table.insert(lines, { Text = L.info_lbl_free_sector, Data = tostring(disk_info.next_free_sector or 0) })
+        table.insert(lines, { Text = L.info_lbl_free_sectors_qty, Data = tostring(free_sectors_count) })
+    end
+
+
   return {
     HostFile         = host_file,
     Format           = "TR-DOS TRD",
@@ -283,6 +458,8 @@ function M.GetOpenPanelInfo(object, handle)
     StartSortOrder   = plugin_settings.last_sort_order,
     Flags            = F.OPIF_ADDDOTS,
     CurDir           = nested_trail,
+    InfoLines        = lines,
+    InfoLinesNumber  = #lines,
   }
 end
 
@@ -856,6 +1033,532 @@ function M.ClosePanel(object, handle)
     end
 end
 
+
+-- [[ Inside theX/formats/trd/init.lua -> Stage 1: Tree Walker Utility ]]
+
+--- Recursive helper to gather all active subfolders and files nested inside a specific DirSys parent folder.
+---@param object table The active parent plugin panel context mapping states
+---@param parent_id integer The unique folder ID node to crawl down from
+---@param relative_sub_path string Accumulated folder path trail segment string (e.g. "GAMES\ACTION")
+---@param out_payload_queue table Array container to accumulate extraction tasks structures
+local function gather_nested_extraction_tree(object, parent_id, relative_sub_path, out_payload_queue)
+    if object.files_list then
+        for _, hobeta_file in ipairs(object.files_list) do
+            local m = hobeta_file.meta
+            if m and not m.deleted then
+                -- Resolve file parent directory container index position without _trdos_index fields
+                -- We locate the index of the file in the master files_list by sequential verification
+                local file_trdos_idx = nil
+                for f_idx, search_file in ipairs(object.files_list) do
+                    if search_file == hobeta_file then
+                        file_trdos_idx = f_idx - 1
+                        break
+                    end
+                end
+
+                local file_parent_id = 0
+                if file_trdos_idx and object.trd_file_maps and object.trd_file_maps[file_trdos_idx] then
+                    file_parent_id = object.trd_file_maps[file_trdos_idx]
+                end
+
+                if file_parent_id == parent_id then
+                    table.insert(out_payload_queue, {
+                        is_directory  = false,
+                        display_name  = m.display_name,
+                        relative_path = relative_sub_path,
+                        header        = hobeta_file.header or "",
+                        data          = hobeta_file.data or ""
+                    })
+                end
+            end
+        end
+    end
+
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            if not folder.deleted and folder.parent_id == parent_id then
+                local folder_display = folder.display_name or "NEW_FOLDER"
+                local appended_sub_path = relative_sub_path == "" and folder_display or (relative_sub_path .. "\\" .. folder_display)
+
+                table.insert(out_payload_queue, {
+                    is_directory  = true,
+                    display_name  = folder_display,
+                    relative_path = relative_sub_path,
+                    header        = "",
+                    data          = ""
+                })
+
+                gather_nested_extraction_tree(object, folder.id, appended_sub_path, out_payload_queue)
+            end
+        end
+    end
+end
+
+--- Native Far Manager VFS callback triggered whenever a user copies files OUT of the plugin panel (F5).
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param items_to_move tPluginPanelItem[] Stateful sequential array containing items highlighted or checked for extraction
+---@param is_move boolean If true, indicates a Move transaction (F6 OUT); if false, indicates a standard Copy (F5 OUT)
+---@param dest_path string Destination absolute host OS filesystem directory path string target passed by Far
+---@param op_flags integer Operation mode bitmask flags passed natively by Far Manager core (F.OPM_*)
+---@return integer result Execution status integer code (1 for success, 0 for user abort, -1 for collapse failure)
+function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
+-- [[ M.GetFiles -> STAGE 1: CAPTURE INTERNAL OPERATIONS (F3 VIEW / F4 EDIT OVERRIDES) ]]
+
+    local is_view = (op_flags & F.OPM_VIEW) ~= 0
+    local is_edit = (op_flags & F.OPM_EDIT) ~= 0
+
+    if is_view or is_edit then
+        local current_item = items_to_move[1]
+        if current_item and current_item.FileAttributes and not current_item.FileAttributes:match("d") then
+            -- Route straight to the shared gui utility component
+            local ui_success = gui.process_view_edit(object, current_item, dest_path, is_view, is_edit)
+            return ui_success and 1 or 0
+        end
+        return 0
+    end
+
+    local panel_info = panel.GetPanelInfo(handle, 1)
+    if not panel_info or panel_info.SelectedItemsNumber == 0 then return 0 end
+
+-- [[ M.GetFiles -> STAGE 2: RESPECT USER'S HISTORICAL MULTI-SELECTION ORDERING ]]
+
+    gui.sync_selection_order(object, handle)
+    local selected_items_table = {}
+    local item_map = {}
+
+    for i = 1, #items_to_move do
+        local item = items_to_move[i]
+        if item and item.FileName and item.FileName ~= ".." then
+            item_map[item.FileName] = item
+        end
+    end
+
+    if object.selection_order then
+        for _, ordered_name in ipairs(object.selection_order) do
+            if item_map[ordered_name] then
+                table.insert(selected_items_table, item_map[ordered_name])
+                item_map[ordered_name] = nil
+            end
+        end
+    end
+
+    for _, item in pairs(item_map) do
+        table.insert(selected_items_table, item)
+    end
+
+    -- Resolve initial fallback destination boundaries path targeting passive pane
+    local default_dest = dest_path or ""
+    if default_dest == "" then
+        local passive_dir_info = panel.GetPanelDirectory(nil, 0)
+        default_dest = passive_dir_info and passive_dir_info.Name or ""
+    end
+
+-- [[ M.GetFiles -> STAGE 3: CHOOSE EXPORT EXTENSION STRATEGY VIA INTERACTIVE DIALOG ]]
+
+    local passive_info = panel.GetPanelInfo(nil, 0)
+    local final_dest_path, export_as_scl, skip_headers
+
+    -- Detect if target passive panel is an active virtual plugin layer frame
+    local is_passive_plugin = passive_info and (passive_info.Flags & F.PFLAGS_PLUGIN) ~= 0
+
+    if is_passive_plugin then
+        -- Enforce strict flat extraction bypass when copying directly inside plugins viewports
+        final_dest_path = default_dest
+        export_as_scl   = false
+        skip_headers    = false
+    else
+        final_dest_path, export_as_scl, skip_headers = dialog_manager.show_export_dialog(default_dest, is_move)
+        if not final_dest_path then
+            return 0
+        end
+    end
+
+    if string.sub(final_dest_path, -1) ~= "\\" and string.sub(final_dest_path, -1) ~= "/" then
+        final_dest_path = final_dest_path .. "\\"
+    end
+-- [[ M.GetFiles -> STAGE 4: BUILD EXTRACTION TASKS ARRAYS AND PROMPT WRITES LOCKS ]]
+
+    local processed_root_elements = {}
+    local conflict_state = { overwrite_all = false, skip_all = false, abort = false }
+
+    if export_as_scl then
+        -- =================================================================================
+        -- [[ BRANCH A: MONOLITHIC FLAT EXPORT COMPILED TO A SINGLE FILE CONTAINER (.SCL/.BIN) ]]
+        -- =================================================================================
+        local files_to_pack = {}
+        for _, item in ipairs(selected_items_table) do
+            local filename = item.FileName
+
+            if item.FileAttributes:match("d") then
+                if object.trd_folders then
+                    for _, folder in ipairs(object.trd_folders) do
+                        if not folder.deleted and folder.parent_id == object.current_folder_id and folder.display_name == filename then
+                            processed_root_elements[filename] = true
+                            gather_nested_extraction_tree(object, folder.id, "", files_to_pack)
+                            break
+                        end
+                    end
+                end
+            else
+                if object.files_list then
+                    for _, hobeta_file in ipairs(object.files_list) do
+                        if hobeta_file.meta and hobeta_file.meta.display_name == filename and not hobeta_file.meta.deleted then
+                            table.insert(files_to_pack, hobeta_file)
+                            processed_root_elements[filename] = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        if #files_to_pack > 0 then
+            local first_file_display_name = files_to_pack[1].meta and files_to_pack[1].meta.display_name or "extracted_disk"
+            local base_archive_name = string.match(first_file_display_name, "^(.-)%.[^%.]+$") or first_file_display_name
+
+            local target_output_filename = ""
+            local target_payload_bytes = ""
+            local use_scl_saver = false
+
+            if skip_headers then
+                -- Synthesize a pristine, headerless continuous binary stream cutting trailing sector padding
+                target_output_filename = base_archive_name .. ".bin"
+                local raw_chunks = {}
+                for _, h_file in ipairs(files_to_pack) do
+                    if h_file.meta and h_file.data then
+                        local exact_size = h_file.meta.size or string.len(h_file.data)
+                        table.insert(raw_chunks, string.sub(h_file.data, 1, exact_size))
+                    end
+                end
+                target_payload_bytes = table.concat(raw_chunks)
+            else
+                target_output_filename = base_archive_name .. ".scl"
+                use_scl_saver = true
+            end
+
+            local full_scl_write_path = final_dest_path .. target_output_filename
+            local file_info = win.GetFileInfo(full_scl_write_path)
+            local should_write = true
+
+            if file_info then
+                local prompt_ok, _, was_skipped = io_manager.safe_write_file(full_scl_write_path, target_payload_bytes, conflict_state, true)
+                if conflict_state.abort then return 0 end
+                should_write = prompt_ok
+
+                if was_skipped then
+                    for file_name in pairs(processed_root_elements) do
+                        processed_root_elements[file_name] = false
+                    end
+                end
+            end
+
+            if should_write then
+                if use_scl_saver then
+                    local flush_success = scl_writer.save(full_scl_write_path, files_to_pack, object, true)
+                    if not flush_success then return -1 end
+                else
+                    local fh_out = io.open(full_scl_write_path, "wb")
+                    if not fh_out then return -1 end
+                    fh_out:write(target_payload_bytes)
+                    fh_out:close()
+                end
+            end
+        end
+    else
+        -- =================================================================================
+        -- [[ BRANCH B: HIERARCHICAL MULTI-FILE EXTRACTION WITH NESTED FOLDERS ]]
+        -- =================================================================================
+        local extraction_queue = {}
+
+        for _, item in ipairs(selected_items_table) do
+            local filename = item.FileName
+            local is_dir = item.FileAttributes:match("d") ~= nil
+
+            if is_dir then
+                if object.trd_folders then
+                    for _, folder in ipairs(object.trd_folders) do
+                        if not folder.deleted and folder.parent_id == object.current_folder_id and folder.display_name == filename then
+                            -- Push base directory task block entry
+                            table.insert(extraction_queue, {
+                                is_directory  = true,
+                                display_name  = folder.display_name,
+                                relative_path = ""
+                            })
+                            processed_root_elements[filename] = true
+
+                            -- [[ REVERTED AND LOCKED: ALWAYS PRESERVE RECURSIVE FOLDER NAME TRAILS ]]
+                            gather_nested_extraction_tree(object, folder.id, folder.display_name, extraction_queue)
+                            break
+                        end
+                    end
+                end
+            else
+                if object.files_list then
+                    for _, hobeta_file in ipairs(object.files_list) do
+                        if hobeta_file.meta and hobeta_file.meta.display_name == filename and not hobeta_file.meta.deleted then
+                            table.insert(extraction_queue, {
+                                is_directory  = false,
+                                display_name  = hobeta_file.meta.display_name,
+                                relative_path = "",
+                                header        = hobeta_file.header or "",
+                                data          = hobeta_file.data or ""
+                            })
+                            processed_root_elements[filename] = true
+                            break
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Execute the collected linear task sequence loop
+        for _, task in ipairs(extraction_queue) do
+            if conflict_state.abort then return 0 end
+
+            local target_full_path = final_dest_path
+            if task.relative_path ~= "" then
+                target_full_path = target_full_path .. task.relative_path .. "\\"
+            end
+
+            if task.is_directory then
+                -- Safely allocate physical directory node layout on the local computer drive
+                target_full_path = target_full_path .. task.display_name
+                io_manager.create_directories(target_full_path)
+            else
+                target_full_path = target_full_path .. task.display_name
+
+                -- Conditional payload extraction layout depending on skip_headers state flag selection
+                local payload_stream = skip_headers and task.data or (task.header .. task.data)
+
+                local write_ok, updated_state, was_skipped = io_manager.safe_write_file(
+                    target_full_path, payload_stream, conflict_state, false
+                )
+                conflict_state = updated_state
+                if was_skipped then
+                    processed_root_elements[task.display_name] = false
+                end
+                if not write_ok and not was_skipped and not conflict_state.abort then
+                    return -1
+                end
+            end
+        end
+    end
+
+-- [[ M.GetFiles -> STAGE 5: CLEAR SELECTIONS AND REFRESH VIEWPORTS LAYOUT MATRICES ]]
+    panel.BeginSelection(handle, F.PANEL_ACTIVE)
+    for i = 1, panel_info.ItemsNumber do
+        local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
+        if item and item.Flags then
+            local is_selected = (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
+            if is_selected and processed_root_elements[item.FileName] then
+                panel.SetSelection(handle, F.PANEL_ACTIVE, i, false)
+            end
+        end
+    end
+    panel.EndSelection(handle, 1)
+    panel.RedrawPanel(handle, 1)
+    panel.RedrawPanel(nil, 0)
+
+    if is_move and not conflict_state.abort then
+        M.DeleteFiles(object, handle, items_to_move, op_flags | F.OPM_SILENT)
+    end
+
+    return 0
+end
+
+
+-- [[ Inside theX/formats/trd/init.lua -> Stage 3: Core Import Entry Point ]]
+
+local trd_writer = require("theX.formats.trd.writer")
+local hobeta_loader = require("theX.formats.hobeta.reader") -- Assuming loader is mapped onto hobeta components
+
+--- Native Far Manager VFS callback triggered whenever a user copies files INTO the plugin panel (F5).
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param items_to_move tPluginPanelItem[] Stateful sequential array containing host OS items targeted for import
+---@param is_move boolean If true, indicates a Move transaction (F6 IN); if false, indicates a standard Copy (F5 IN)
+---@param src_path string Source absolute host OS filesystem directory path string target passed by Far
+---@param op_flags integer Operation mode bitmask flags passed natively by Far Manager core (F.OPM_*)
+---@return integer result Execution status integer code (1 for success, 0 for user abort)
+function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
+    if not object or not items_to_move or #items_to_move == 0 then return 0 end
+
+    -- Intercept and pull active configuration parameters controls variables layers
+    local use_dirsys = plugin_settings and plugin_settings.get("use_dirsys", true)
+    if use_dirsys == nil then use_dirsys = true end
+
+    -- Flat sequential layout queue holding files staging profiles structures
+    local flat_import_tasks = {}
+
+    -- Clone and stage existing DirSys subdirectories states into a clean transient workspace table buffer
+    local temp_folders = {}
+    if object.trd_folders then
+        for _, f in ipairs(object.trd_folders) do
+            table.insert(temp_folders, { id = f.id, name = f.name, parent_id = f.parent_id, deleted = f.deleted })
+        end
+    end
+
+    -- [[ STAGE A: IDENTIFY AND PRE-PROCESS PC FILE INPUT PATHS CONTEXTS ]]
+    for _, item in ipairs(items_to_move) do
+        local full_pc_path = src_path .. "\\" .. item.FileName
+        local item_info = win.GetFileInfo(full_pc_path)
+
+        if item_info and string.find(item_info.FileAttributes, "d") then
+            -- User attempts to copy directories inside the TRD panel container frame
+            if not use_dirsys then
+                far.Message(L.trd_err_put_dirsys_disabled, L.trd_title_import_err, L.m_btn_cancel, "w")
+                return 0
+            end
+
+            -- Run our dynamic tree walker crawler to harvest inner contents under the active navigation level folder ID
+            local current_folder_lvl_id = object.current_folder_id or 0
+            harvest_pc_import_tree(object, full_pc_path, current_folder_lvl_id, temp_folders, flat_import_tasks)
+        else
+            -- User attempts to copy a standalone individual file element row
+            local current_folder_lvl_id = object.current_folder_id or 0
+            table.insert(flat_import_tasks, {
+                pc_file_path = full_pc_path,
+                virtual_parent_id = current_folder_lvl_id
+            })
+        end
+    end
+
+
+    -- [[ M.PutFiles -> STAGE B: TRANSACTIONAL SIMULATION WITH MULTI-CHUNKS INDICES FIX ]]
+
+    -- Clone master files_list into a clean transient buffer mapping active files records structures
+    local temp_files_list = {}
+    if object.files_list then
+        for _, existing_file in ipairs(object.files_list) do
+            table.insert(temp_files_list, existing_file)
+        end
+    end
+
+    -- Clone master file_maps to precisely calculate downstream allocations maps boundaries shifts
+    local temp_file_maps = {}
+    if object.trd_file_maps then
+        for idx, p_id in pairs(object.trd_file_maps) do
+            temp_file_maps[idx] = p_id
+        end
+    end
+
+    if #temp_folders > 127 then
+        far.Message(L.trd_err_max_folders_limit, L.trd_title_import_err, L.m_btn_ok, "w")
+        return 0
+    end
+
+    local accumulated_new_sectors_demand = 0
+
+    -- [[ CRITICAL FIX: TRACK THE REAL COUNTER CONTINUOUSLY ]]
+    -- We must not rely solely on Lua's '#' operator inside the loop because
+    -- table re-indexing during multi-file SCL expansions can cause length calculation gaps.
+    local active_trdos_file_counter = #temp_files_list
+
+    for _, task in ipairs(flat_import_tasks) do
+        local pre_load_count = active_trdos_file_counter
+
+        -- Call our authoritative automated cross-format pipeline dispatcher
+        local success, error_code = loader.load_file(temp_files_list, task.pc_file_path, object)
+
+        if not success then
+            local lang_key = string.lower(error_code or "err_cannot_open_file")
+            far.Message(L[lang_key] or L.m_err_read_failed, L.trd_title_import_err, L.m_btn_cancel, "w")
+            return 0
+        end
+
+        -- Calculate how many files were ACTUALLY appended to the list by the loader
+        local post_load_count = #temp_files_list
+        local items_added_in_this_pass = post_load_count - pre_load_count
+
+        -- [[ DYNAMIC 0-BASED MAPS ALIGNMENT LAYER ]]
+        for offset_idx = 0, (items_added_in_this_pass - 1) do
+            local target_0based_trdos_idx = pre_load_count + offset_idx
+
+            -- Bind the newly allocated slot straight to the active DirSys folder ID context
+            temp_file_maps[target_0based_trdos_idx] = task.virtual_parent_id
+
+            -- Fetch calculated sector bounds allocation data directly from the newly appended meta fields
+            local latest_file_ref = temp_files_list[target_0based_trdos_idx + 1]
+            if latest_file_ref and latest_file_ref.meta then
+                accumulated_new_sectors_demand = accumulated_new_sectors_demand + (latest_file_ref.meta.sectors or 1)
+            end
+        end
+
+        -- Advance our authoritative counter forward by the exact number of files ingested
+        active_trdos_file_counter = post_load_count
+    end
+
+    -- [[ STAGE C: STRICT NATIVE TR-DOS PLATFORM SPECIFICATIONS SHIELD VERIFICATIONS ]]
+    -- 1. Enforce strict 128 total physical files limits ceiling rules constraints
+    if #temp_files_list > 128 then
+        far.Message(L.trd_err_max_files_limit, L.trd_title_import_err, L.m_btn_ok, "w")
+        return 0
+    end
+
+    -- 2. Enforce strict physical disk free space capacity calculations rules bounds
+    local available_free_sectors = object.trd_info and object.trd_info.initial_free or 0
+    if accumulated_new_sectors_demand > available_free_sectors then
+        local space_err_msg = string.format(L.trd_err_disk_full, accumulated_new_sectors_demand, available_free_sectors)
+        far.Message(space_err_msg, L.trd_title_import_err, L.m_btn_ok, "w")
+        return 0
+    end
+
+    -- [[ STAGE D: COMPLETE TRANSACTION TRANSACTION COMMIT SECTIONS ]]
+    -- Overwrite master session registers states directly from the verified transient working buffers maps
+    object.files_list    = temp_files_list
+    object.trd_folders   = temp_folders
+    object.trd_file_maps = temp_file_maps
+
+    -- Flush our session changes directly to host storage, setting true to enforce internal headers rebuild
+    local flush_success = trd_writer.save(object.archive_path, object.files_list, object, true)
+
+    if flush_success then
+        -- Refresh active/passive panel viewports matrices to instantly reveal shifts rows results
+        panel.UpdatePanel(handle, 1)
+        panel.RedrawPanel(handle, 1)
+        panel.UpdatePanel(nil, 0)
+        panel.RedrawPanel(nil, 0)
+        return 1
+    else
+        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
+        return 0
+    end
+end
+
+
+---@param object table The plugin instance table mapping panel state
+---@param handle userdata The low-level Far Manager panel handle context pointer
+---@param record table System structure carrying input event metrics
+---@return boolean handled Always returns false to let Far complete its native updates natively
+function M.ProcessPanelInput(object, handle, record)
+    if record.EventType == F.KEY_EVENT and record.KeyDown then
+        local v_key = record.VirtualKeyCode
+        local ctrl_state = record.ControlKeyState
+
+        -- [[ HOOK 1: INTERCEPT SINGLE ITEM INSERT SELECTION ]]
+        if v_key == 0x2D then
+            if not object.selection_order then
+                object.selection_order = {}
+            end
+            local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
+            if current_item and current_item.FileName then
+                local is_selected = (ffi.cast("uint64_t", current_item.Flags) & F.PPIF_SELECTED) ~= 0
+                local existing_idx = nil
+                for idx, name in ipairs(object.selection_order) do
+                    if name == current_item.FileName then existing_idx = idx; break end
+                end
+
+                if is_selected then
+                    if existing_idx then table.remove(object.selection_order, existing_idx) end
+                else
+                    if not existing_idx then table.insert(object.selection_order, current_item.FileName) end
+                end
+            end
+        end
+    end
+    return false
+end
 
 -- [[ DECLARATIVE LUA_FAR INTERFACE INTEGRATION LAYER ]]
 MenuItem {

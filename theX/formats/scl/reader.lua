@@ -10,7 +10,7 @@ local MAX_SCL_SIZE = 9 + (MAX_SCL_FILES * 14) + (MAX_SCL_FILES * 255 * 256) + 4
 ---@param byte integer
 ---@return boolean
 local function is_printable(byte)
-    return byte >= 32 and byte <= 126
+    return byte >= 33 and byte <= 126
 end
 
 --- Enforces strict maximum size bounds and verifies standard SCL container parameters.

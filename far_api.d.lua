@@ -124,18 +124,36 @@ function far.SendDlgMessage(hDlg, Msg, Param1, Param2) end
 ---@return integer|nil Position 1-based index integer tracking chosen item location at closure moment, or nil if cancelled
 function far.Menu(Properties, Items, BreakKeys) end
 
+---@alias fRecursiveSearchCallback fun(item: tPluginPanelItem, full_path: string, ...: any): any
+
+---Recursively traverses the host OS filesystem starting from a root directory, invoking a user callback for each matching element.
+---
+---### Mask Attribute Filtering Note:
+---The `Mask` parameter can enforce strict Win32 attributes constraints appended right after a `>>` delimiter token.
+---* A small letter (lowercase) means the attribute **MUST** be present.
+---* A capital letter (uppercase) means the attribute **MUST NOT** be present.
+---* *Example:* `*|*.txt>>rA` (Matches text resources that are Read-Only, but strictly **NOT** Archive assets).
+---
+---### Execution Control Bounds:
+---If the user-provided callback function evaluates and returns any value that is **neither false nor nil**,
+---the search loop instantly terminates, and `far.RecursiveSearch` propagates all values returned by that callback straight back to the caller.
+---@param InitDir string Absolute host OS filesystem directory pathway string where the deep crawl starts
+---@param Mask string File mask filter pattern supporting standard wildcards and custom attributes qualifiers (e.g. `*.*`)
+---@param UserFunc fRecursiveSearchCallback User callback routine triggered sequentially upon locating each matching item entity
+---@param Flags integer? Native internal search modification bitmask flags passed by Far Manager core (any FRS_*)
+---@param ... any? Optional invariant transient parameters forwarded straight into the UserFunc callback stack signature loop on each tick
+---@return ...any results All distinct return values evaluated and surfaced by UserFunc if it triggered a loop halt transaction; otherwise nothing
+function far.RecursiveSearch(InitDir, Mask, UserFunc, Flags, ...) end
+
 ---@class far.Flags
 ---@extending integer
 ---@index integer Global static bitmask flags authority dictionary for Far Manager 3 API.
 local Flags = {
     OPIF_ADDDOTS            = 0x0000000000000008,
-    OPM_SILENT              = 0x0000000000000001,
-    OPM_FIND                = 0x0000000000000002,
     PFLAGS_REVERSESORTORDER = 0x0000000000000004,
     FE_CHANGEVIEWMODE       = 0,
     PANEL_ACTIVE            = 1,
     PANEL_PASSIVE           = 0,
-    OPEN_ANALYSE            = 9,
     SM_UNSORTED             = 1,
 
     DI_TEXT                 = 0,
@@ -164,6 +182,38 @@ local Flags = {
     DN_CLOSE                = 4117,
 
     FMENU_AUTOHIGHLIGHT     = 0x0000000000000004,
+
+    PPIF_SELECTED           = 0x0000000040000000,
+
+    OPEN_LEFTDISKMENU       = 0,
+    OPEN_PLUGINSMENU        = 1,
+    OPEN_FINDLIST           = 2,
+    OPEN_SHORTCUT           = 3,
+    OPEN_COMMANDLINE        = 4,
+    OPEN_EDITOR             = 5,
+    OPEN_VIEWER             = 6,
+    OPEN_FILEPANEL          = 7,
+    OPEN_DIALOG             = 8,
+    OPEN_ANALYSE            = 9,
+    OPEN_RIGHTDISKMENU      = 10,
+    OPEN_FROMMACRO          = 11,
+    OPEN_LUAMACRO           = 100,
+
+    KEY_EVENT               = 0x1,
+    SHIFT_PRESSED           = 0x10,
+
+    IPLFLAGS_SEPARATOR      = 0x0000000000000001,
+
+    OPM_SILENT              = 0x0000000000000001,
+    OPM_FIND                = 0x0000000000000002,
+    OPM_VIEW                = 0x0000000000000004,
+    OPM_EDIT                = 0x0000000000000008,
+    OPM_TOPLEVEL            = 0x0000000000000010,
+    OPM_DESCR               = 0x0000000000000020,
+    OPM_QUICKVIEW           = 0x0000000000000040,
+    OPM_PGDN                = 0x0000000000000080,
+    OPM_COMMANDS            = 0x0000000000000100,
+
 }
 
 -- Assign the local symbol back to global namespace to activate autocomplete chains
@@ -285,6 +335,37 @@ function panel.GetPanelDirectory(handle, whatpanel) end
 ---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
 ---@return tPluginPanelItem|nil item Structured panel row element metadata dictionary, or nil if target cursor resides on an unallocated or empty pane view
 function panel.GetCurrentPanelItem(handle, whatpanel) end
+
+---@overload fun(handle: nil, whatpanel: 0|1, itemindex: integer): tPluginPanelItem|nil
+---Retrieves detailed file attributes metadata and content metrics from the specific panel element row index.
+---@param handle userdata Low-level Far Manager panel core instance frame context pointer handle, or nil
+---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
+---@param itemindex integer The 1-based index position of the targeted item element row inside the panel viewport
+---@return tPluginPanelItem|nil item Structured panel row element metadata dictionary, or nil if target index is out of bounds
+function panel.GetPanelItem(handle, whatpanel, itemindex) end
+
+---@overload fun(handle: nil, whatpanel: 0|1): boolean
+---Signals Far Manager core to lock and freeze UI updates on the specified viewport before executing batch selection modifications.
+---@param handle userdata Low-level Far Manager panel core instance frame context pointer handle, or nil
+---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
+---@return boolean result Returns true if the session lock transaction was successfully established, false on errors
+function panel.BeginSelection(handle, whatpanel) end
+
+---@overload fun(handle: nil, whatpanel: 0|1, items: integer|integer[], selection: boolean): boolean
+---Modifies the focused checkmark state attributes on specific row elements or array matrices indices.
+---@param handle userdata Low-level Far Manager panel core instance frame context pointer handle, or nil
+---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
+---@param items integer|integer[] 1-based target row numerical position index ID, or a flat array sequence table of 1-based indices
+---@param selection boolean True registers a check highlight marker on the row, false cleans/drops the check flag attributes
+---@return boolean result Returns true if the selection parameters were safely mutated, false on execution failures
+function panel.SetSelection(handle, whatpanel, items, selection) end
+
+---@overload fun(handle: nil, whatpanel: 0|1): boolean
+---Signals Far Manager core to unfreeze and unlock the UI, applying all stacked batch selection changes to the panel screen.
+---@param handle userdata Low-level Far Manager panel core instance frame context pointer handle, or nil
+---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
+---@return boolean result Returns true if the session lock was safely released and viewports flushed, false on errors
+function panel.EndSelection(handle, whatpanel) end
 
 
 ---@class M

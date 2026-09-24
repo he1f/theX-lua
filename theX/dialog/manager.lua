@@ -131,8 +131,8 @@ function manager.show_export_dialog(default_dest, is_move)
     if dlg_result == -1 or dlg_result == 11 then return nil end
 
     local final_dest_path = dialog_items[ID_DEST_EDIT][10] or default_dest
-    local export_as_scl   = (dialog_items[ID_RAD_SCL] == 1 or dialog_items[ID_RAD_SCL] == true)
-    local skip_headers    = (dialog_items[ID_CHK_SKIP] == 1 or dialog_items[ID_CHK_SKIP] == true)
+    local export_as_scl   = (dialog_items[ID_RAD_SCL][6] == 1 or dialog_items[ID_RAD_SCL][6] == true)
+    local skip_headers    = (dialog_items[ID_CHK_SKIP][6] == 1 or dialog_items[ID_CHK_SKIP][6] == true)
     final_dest_path = string.match(final_dest_path, '^%s*"?([^"]+)"?%s*$') or final_dest_path
 
     return final_dest_path, export_as_scl, skip_headers

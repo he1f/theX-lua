@@ -8,10 +8,14 @@ local plugin_settings = settings_manager.new("xtrd")
 -- [[ TR-DOS Disk Geometry Constants Constraints ]]
 local SECTOR_SIZE   = 256
 local TRACK_SECTORS = 16
--- Minimum target boundary layout: 40 tracks * 1 side * 16 sectors * 256 bytes = 163840 bytes (160KB)
-local MIN_TRD_SIZE  = 40 * 1 * 16 * 256
 -- 80 tracks * 2 sides * 16 sectors * 256 bytes = 655360 bytes (Standard double-sided TRD)
 local MAX_TRD_SIZE  = 80 * 2 * 16 * 256
+
+---@param byte integer
+---@return boolean
+local function is_printable(byte)
+    return byte >= 33 and byte <= 126
+end
 
 --- Instantly fetches file size metadata from OS to reject huge assets before loading memory stack.
 ---@param trd_path string Absolute physical filesystem path to the target TRD image
@@ -26,8 +30,22 @@ function trd_reader.is_valid(trd_path)
     local file_len = file_handle:seek("end")
     file_handle:seek("set", 0)
 
-    -- Reject files that are smaller than a 40-track single-sided disk or larger than an 80-track double-sided disk
-    if file_len < MIN_TRD_SIZE then
+    if file_len < 2048 + 256 then
+        file_handle:close()
+        return false, "ERR_FILE_TOO_SMALL"
+    end
+
+    -- Read the 9th system sector (Track 0, Sector 8) to verify native TR-DOS signature identity
+    -- Offset: 8 sectors * 256 bytes = 2048 bytes (0x800)
+    file_handle:seek("set", 2048)
+    local sys_sector = file_handle:read(256)
+    file_handle:close()
+
+    local free_sector = string.byte(sys_sector, 0xE1 + 1) or 0
+    local free_track  = string.byte(sys_sector, 0xE2 + 1) or 1
+
+    local min_trd_size = 16 * SECTOR_SIZE * free_track + SECTOR_SIZE * free_sector
+    if file_len < min_trd_size then
         file_handle:close()
         return false, "ERR_FILE_TOO_SMALL"
     end
@@ -36,12 +54,6 @@ function trd_reader.is_valid(trd_path)
         file_handle:close()
         return false, "ERR_FILE_TOO_LARGE"
     end
-
-    -- Read the 9th system sector (Track 0, Sector 8) to verify native TR-DOS signature identity
-    -- Offset: 8 sectors * 256 bytes = 2048 bytes (0x800)
-    file_handle:seek("set", 2048)
-    local sys_sector = file_handle:read(256)
-    file_handle:close()
 
     if not sys_sector or string.len(sys_sector) < 256 then
         return false, "ERR_CORRUPTED_HEADER_CATALOG"
@@ -122,6 +134,11 @@ function trd_reader.process(target_files_list, trd_path, object)
         local data_start_offset = (start_trk * TRACK_SECTORS + start_sec) * SECTOR_SIZE
         local data_len_bytes    = no_secs * SECTOR_SIZE
 
+        local ext = h_type
+        local raw_ext = string.byte(ext)
+        if is_printable(raw_ext) and is_printable(st_l) and is_printable(st_h) then
+            ext = string.char(raw_ext, st_l, st_h)
+        end
         local file_data = ""
         if data_start_offset + data_len_bytes <= string.len(trd_bytes) then
             file_data = string.sub(trd_bytes, data_start_offset + 1, data_start_offset + data_len_bytes)
@@ -136,6 +153,7 @@ function trd_reader.process(target_files_list, trd_path, object)
             track   = start_trk,
             sector  = start_sec,
             deleted = is_deleted,
+            ext     = ext,
         }
 
         local h_base_15bytes = h_name .. h_type .. string.char(st_l, st_h, sz_l, sz_h, 0, no_secs)

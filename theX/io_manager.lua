@@ -13,7 +13,7 @@ function io_manager.create_directories(dir_path)
     if parent_dir and parent_dir ~= "" and parent_dir ~= dir_path then
         io_manager.create_directories(parent_dir)
     end
-    return win.CreateDirectory(dir_path) or false
+    return win.CreateDir(dir_path) or false
 end
 
 --- Serializes a low-level Win32 FILETIME 64-bit structure tracking ticks since Jan 1, 1601 into a localized date string.

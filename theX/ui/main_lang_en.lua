@@ -77,4 +77,33 @@ return {
     io_btn_skip               = "Skip",
     io_btn_overwrite_all      = "Overwrite All",
     io_btn_skip_all           = "Skip All",
+
+    trd_err_put_dirsys_disabled = "Cannot import directories. DirSys folder extension is disabled.",
+    trd_err_max_files_limit   = "Failed to import. TRD disk limits exceeded (Maximum 128 files allowed).",
+    trd_err_max_folders_limit = "Failed to import. DirSys catalog limits exceeded (Maximum 127 folders allowed).",
+    trd_err_disk_full         = "Failed to import. Not enough free space on TRD disk image.\nRequired: %d sectors, Available: %d sectors.",
+    trd_title_import_err      = "Import Error",
+
+    -- [[ INFOLINES SECTION TITLES ]]
+    info_sec_files            = "Files info",
+    info_sec_dirsys           = "Directories info",
+    info_sec_space            = "Free space info",
+
+    -- [[ INFOLINES METRICS LABELS ]]
+    info_lbl_label            = "Disk Label:",
+    info_lbl_type             = "Disk Type:",
+    info_lbl_write_protect    = "Write Protection:",
+    info_lbl_wp_active        = "Yes (Read-Only Image)",
+    info_lbl_wp_inactive      = "No (Read-Write Allowed)",
+    info_lbl_total_files      = "Total Active Files:",
+    info_lbl_deleted_files    = "Deleted Files:",
+    info_lbl_dirsys_status    = "DirSys Status:",
+    info_lbl_dirsys_present   = "Initialized & Present",
+    info_lbl_dirsys_absent    = "Not Found / Inactive",
+    info_lbl_total_folders    = "Total Active Folders:",
+    info_lbl_deleted_folders  = "Deleted Folders:",
+    info_lbl_free_track       = "First Free Track:",
+    info_lbl_free_sector      = "First Free Sector:",
+    info_lbl_free_sectors_qty = "Free Sectors Count:",
+
 }

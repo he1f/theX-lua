@@ -7,7 +7,7 @@ local MAX_HOBETA_SIZE = 17 + (255 * 256)
 ---@param byte integer
 ---@return boolean
 local function is_printable(byte)
-    return byte >= 32 and byte <= 126
+    return byte >= 33 and byte <= 126
 end
 
 ---@param hobeta_path string Absolute path to the source file on disk

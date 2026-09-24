@@ -21,7 +21,7 @@ local manager = require("theX.dialog.manager")
 
 local detector = require("theX.detector")
 local vfs_core = require("theX.trdos_vfs_core")
-local pipeline = require("theX.xLook.decoder_pipeline")
+local gui = require("theX.utils.gui_operations")
 
 local settings_manager = require("theX.settings_manager")
 local plugin_settings = settings_manager.new("xscl")
@@ -218,143 +218,6 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
 end
 
 
---- Processes internal Far UI requests (F3 view, F4 edit, Ctrl+Q quick view preview)
---- by extracting the file, running dynamic xLook text decoders if matching "asm" rules.
----@param object table The core plugin context instance mapping the files_list state
----@param item table Single selected PluginPanelItem object from Far Manager layout
----@param dest_path string Temporary destination root directory on the host PC filesystem
----@param is_view boolean Active state bit flag for standard unmodal F3 Viewer requests
----@param is_edit boolean Active state bit flag for standard unmodal F4 Editor requests
----@return boolean success Returns true if the temporary file was generated and UI window spawned
-local function execute_internal_gui_op(object, item, dest_path, is_view, is_edit)
-    if not item or not item.FileName then return false end
-
-    local target_file = nil
-    for _, hobeta_file in ipairs(object.files_list) do
-        if hobeta_file.meta and hobeta_file.meta.display_name == item.FileName then
-            target_file = hobeta_file
-            break
-        end
-    end
-
-    if not target_file then return false end
-
-    local m = target_file.meta
-    local raw_data = target_file.data or ""
-
-    -- [[ STAGE A: RUN INTERACTIVE COMPILER TEXT DECODING ]]
-    local text_payload = nil
-    local assembler_label = nil
-    if m.group == "asm" or m.group == "basic" or m.show_header == false then
-        text_payload, assembler_label = pipeline.decode_text_stream(raw_data, m)
-    end
-
-    -- [[ STAGE B: DYNAMICALLY RESOLVE TEMPORARY DISK PATH & EXTENSION ]]
-    local base_file_name = item.FileName:match("^(.-)%.[^%.]+$") or item.FileName
-    local target_filename = item.FileName
-
-    -- If a decoder returned a clean string text buffer, override extension to .a80
-    -- This enforces native text highlighting rules inside Far Manager editor/viewer layout
-    if m.group == "asm" then
-        target_filename = base_file_name .. ".a80"
-    elseif m.group == "basic" then
-        target_filename = base_file_name .. ".bas"
-    else
-        local target_ext = m.ext or m.new_type or m.type or "C"
-        target_filename = base_file_name .. target_ext
-        if m.description then
-            assembler_label = m.description
-        end
-    end
-
-    local full_dest_path = win.JoinPath(dest_path, target_filename)
-
-    -- [[ STAGE C: WRITE PAYLOAD STREAM BUFFER TO PHYSICAL DISK ]]
-    local file_handle = io.open(full_dest_path, "wb")
-    if not file_handle then return false end
-
-    if text_payload then
-        file_handle:write(text_payload)
-    else
-        if m.show_header == false then
-            file_handle:write(raw_data)
-        else
-            local header_bytes = target_file.header or ""
-            file_handle:write(header_bytes .. (target_file.data or ""))
-        end
-    end
-    file_handle:close()
-
-    -- [[ STAGE D: COMPILE CUSTOM WINDOW TITLE LAYOUTS ]]
-    local custom_title = ""
-    local ext_str = m.ext or m.type or "C"
-    if string.len(ext_str) == 3 then
-        -- Rule 1: If a 3-letter virtual extension exists, display it inside angle brackets
-        custom_title = string.format("%s.%s", m.name, ext_str)
-    else
-        -- Rule 2: Fallback to standard 1-character native TR-DOS type layout inside angle brackets
-        local native_type = string.sub(m.type or "C", 1, 1)
-        custom_title = string.format("%s.<%s>", m.name, native_type)
-    end
-    custom_title = string.format("[%s]", custom_title)
-    if assembler_label then
-        custom_title = custom_title .. "[" .. assembler_label .. "]"
-    end
-
-    -- [[ STAGE E: DISPLAY NON-MODAL CONTAINER WINDOWS ]]
-    if is_view then
-        viewer.Viewer(full_dest_path, custom_title, nil, nil, nil, nil, F.VF_NONMODAL + F.VF_DELETEONCLOSE)
-        return true
-    elseif is_edit then
-        editor.Editor(full_dest_path, custom_title, nil, nil, nil, nil, F.EF_NONMODAL + F.EF_DELETEONCLOSE)
-        return true
-    end
-
-    return false
-end
-
-
---- Synchronizes our custom selection tracking array with the actual live state of the Far panel.
----@param object table The plugin instance table mapping panel state
----@param handle userdata The low-level Far Manager panel handle context pointer
-local function sync_selection_order(object, handle)
-    if not object.selection_order then object.selection_order = {} end
-
-    local panel_info = panel.GetPanelInfo(handle, F.PANEL_ACTIVE)
-    if not panel_info then return end
-
-    -- 1. Create a quick lookup map of what is currently physically highlighted on the real panel
-    local real_selected_map = {}
-    for i = 1, panel_info.ItemsNumber do
-        local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
-        if item and item.FileName then
-            local is_selected = item.Selected or (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
-            if is_selected then real_selected_map[item.FileName] = true end
-        end
-    end
-
-    -- 2. Drop items from our tracking history that are no longer highlighted on screen (e.g. cleared via Ctrl+Minus)
-    for i = #object.selection_order, 1, -1 do
-        local tracked_name = object.selection_order[i]
-        if not real_selected_map[tracked_name] then
-            table.remove(object.selection_order, i)
-        end
-    end
-
-    -- 3. Append newly selected items (e.g. from Ctrl+Plus/Ctrl+Star blocks) to the end of the queue
-    local already_tracked = {}
-    for _, name in ipairs(object.selection_order) do already_tracked[name] = true end
-
-    for i = 1, panel_info.ItemsNumber do
-        local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
-        if item and item.FileName and real_selected_map[item.FileName] then
-            if not already_tracked[item.FileName] then
-                table.insert(object.selection_order, item.FileName)
-            end
-        end
-    end
-end
-
 function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     local is_view = (op_flags & F.OPM_VIEW) ~= 0
     local is_edit = (op_flags & F.OPM_EDIT) ~= 0
@@ -366,12 +229,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
         local current_item = items_to_move[1]
 
         if current_item then
-            -- Выгружаем чистый файл во временный каталог Windows
-            -- Мы принудительно передаем true вместо оригинального разделения флагов просмотра,
-            -- чтобы хелпер всегда создавал полноценное окно viewer.Viewer
-            local ui_success = execute_internal_gui_op(object, current_item, dest_path, is_view, is_edit)
-
-            -- Возвращаем строго число 1, сообщая Фару, что мы полностью забрали UI на себя
+            local ui_success = gui.process_view_edit(object, current_item, dest_path, is_view, is_edit)
             return ui_success and 1 or 0
         end
         return 0
@@ -382,7 +240,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 
     -- Собираем выделенные элементы в чистую Lua-таблицу из items_to_move
     -- [[ STEP 2: REORDERED PHYSICAL FILES EXPORT MULTI-SELECTION LOGIC ]]
-    sync_selection_order(object, handle)
+    gui.sync_selection_order(object, handle)
     local selected_items_table = {}
     local item_map = {}
 
@@ -445,7 +303,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
         for i = 1, panel_info.ItemsNumber do
             local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
             if item and item.Flags then
-                local is_selected = item.Selected or (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
+                local is_selected = (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
                 if is_selected and processed_map[item.FileName] then
                     panel.SetSelection(handle, F.PANEL_ACTIVE, i, false)
                 end
@@ -856,7 +714,7 @@ function M.ProcessPanelInput(object, handle, record)
             end
             local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
             if current_item and current_item.FileName then
-                local is_selected = current_item.Selected or (ffi.cast("uint64_t", current_item.Flags) & F.PPIF_SELECTED) ~= 0
+                local is_selected = (ffi.cast("uint64_t", current_item.Flags) & F.PPIF_SELECTED) ~= 0
                 local existing_idx = nil
                 for idx, name in ipairs(object.selection_order) do
                     if name == current_item.FileName then existing_idx = idx; break end
