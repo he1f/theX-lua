@@ -26,11 +26,11 @@ local settings_manager = require("theX.utils.settings_manager")
 local plugin_settings = settings_manager.new("xscl")
 
 
--- Справочник UUID и констант
+-- UUID and constants reference
 local plugin_guid = win.Uuid("6A7B8C9D-E1F2-3A4B-5C6D-7E8F9A0B1C2D")
 local SECTOR_SIZE = 256
 
--- Публичный неймспейс плагина (сюда пишем ТОЛЬКО экспортируемые методы)
+-- Public plugin namespace (write ONLY exported methods here)
 local M = {}
 
 M.Info = {
@@ -41,21 +41,21 @@ M.Info = {
   Author = "Dima Kozlov",
 }
 
--- Безопасное получение директории панели (с обработкой плагинового хост-файла)
+-- Safely retrieve the panel directory (handling a plugin host file)
 local function get_panel_dir(panel_type_flag)
     local p_info = panel.GetPanelInfo(nil, panel_type_flag)
     if not p_info then return "" end
 
-    -- Если это плагиновая панель, берем путь её хост-файла и отрезаем имя
+    -- If this is a plugin panel, take its host file path and strip the filename
     if (p_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
         local host_file = panel.GetPanelHostFile(nil, panel_type_flag)
         if host_file and host_file ~= "" then
-            -- Отрезаем имя файла через string.match, оставляя только путь каталога
+            -- Strip the filename via string.match, keeping only the directory path
             local dir = string.match(host_file, "^(.*)[\\/][^\\/]+$")
             return dir or ""
         end
     else
-        -- Если это обычная панель, запрашиваем её директорию штатно
+        -- If this is a regular panel, query its directory the normal way
         local dir_obj = panel.GetPanelDirectory(nil, panel_type_flag)
         if dir_obj and dir_obj.Name then
             return dir_obj.Name
@@ -82,7 +82,7 @@ end
 
 local function find_hobeta_by_display_name(files_list, display_name)
     for _, hobeta_file in ipairs(files_list) do
-        -- Строгое сравнение с учетом регистра символов
+        -- Strict case-sensitive comparison
         if hobeta_file.meta.display_name == display_name then
             return hobeta_file
         end
@@ -90,11 +90,11 @@ local function find_hobeta_by_display_name(files_list, display_name)
     return nil
 end
 
--- Вспомогательная функция физического сохранения файлов наружу
--- Возвращает: успех (true/false), карту_успешно_записанных_файлов (table)
+-- Helper function for physically saving files out to disk
+-- Returns: success (true/false), a map of successfully written files (table)
 local function execute_export_logic(object, items_to_move, is_move, final_dest_path, export_as_scl, skip_headers)
     local files_to_export = {}
-    local processed_map = {} -- Карта для отслеживания: [display_name] = true (если записан)
+    local processed_map = {} -- Tracking map: [display_name] = true (if written)
 
     for i = 1, #items_to_move do
         local item = items_to_move[i]
@@ -141,23 +141,23 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
         end
 
         local conflict_state = { abort = false }
-        local fake_data = string.rep(" ", 1024) -- Буфер-пустышка для оценки конфликта размеров в диалоге
+        local fake_data = string.rep(" ", 1024) -- Dummy placeholder buffer used to evaluate the size conflict in the dialog
 
         local allowed, _, was_skipped = io_manager.safe_write_file(output_scl_name, fake_data, conflict_state, true)
 
         if allowed then
-            -- Если диалог подтвержден, райтером пишем настоящую структуру поверх
+            -- If the dialog was confirmed, write the real structure over it with the writer
             scl_writer.save(output_scl_name, prepared_scl_list, object)
-            -- Маркируем ВСЕ файлы этой группы как успешно обработанные
+            -- Mark ALL files in this group as successfully processed
             for _, hobeta_file in ipairs(files_to_export) do
                 processed_map[hobeta_file.meta.display_name] = true
             end
         else
             if was_skipped then
-                -- Если SCL был пропущен, файлы остаются выделенными (processed_map пустая)
+                -- If the SCL was skipped, the files remain selected (processed_map stays empty)
                 return true, processed_map
             end
-            return false, processed_map -- Отмена операции
+            return false, processed_map -- Operation cancelled
         end
     else
         local conflict_state = { overwrite_all = false, skip_all = false, abort = false }
@@ -179,17 +179,17 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
                 data_to_write = hobeta_file.header .. hobeta_file.data
             end
 
-            -- Вызываем safe_write_file (is_scl = false)
+            -- Call safe_write_file (is_scl = false)
             local write_ok, updated_state, was_skipped = io_manager.safe_write_file(full_output_path, data_to_write, conflict_state, false)
             conflict_state = updated_state
 
             if write_ok then
-                -- ПРАВИЛО 1: Файл успешно записан, заносим его в карту для снятия выделения
+                -- RULE 1: File written successfully, add it to the map to clear its selection
                 processed_map[hobeta_file.meta.display_name] = true
             else
                 if was_skipped then
-                    -- Файл пропущен по кнопке "Пропустить/Пропустить Все".
-                    -- Мы НЕ добавляем его в processed_map, поэтому он ОСТАНЕТСЯ выделенным!
+                    -- File skipped via the "Skip/Skip All" button.
+                    -- We do NOT add it to processed_map, so it will REMAIN selected!
                 elseif not conflict_state.abort then
                     far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
                 end
@@ -201,7 +201,7 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
         end
     end
 
-    -- Логика перемещения (F6) удаляет только реально скопированные файлы
+    -- Move logic (F6) deletes only the files that were actually copied
     if is_move then
         local kept_files = {}
         for _, hobeta_file in ipairs(object.files_list) do
@@ -237,7 +237,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     local panel_info = panel.GetPanelInfo(handle, F.PANEL_ACTIVE)
     if not panel_info or panel_info.SelectedItemsNumber == 0 then return 0 end
 
-    -- Собираем выделенные элементы в чистую Lua-таблицу из items_to_move
+    -- Collect the selected items into a clean Lua table from items_to_move
     -- [[ STEP 2: REORDERED PHYSICAL FILES EXPORT MULTI-SELECTION LOGIC ]]
     gui.sync_selection_order(object, handle)
     local selected_items_table = {}
@@ -266,7 +266,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
         table.insert(selected_items_table, item)
     end
 
-    -- Определяем путь назначения (пассивная панель)
+    -- Determine the destination path (passive panel)
     local default_dest = dest_path or ""
     if default_dest == "" then default_dest = get_panel_dir(F.PANEL_PASSIVE) end
 
@@ -274,20 +274,20 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 
     local final_dest_path, export_as_scl, skip_headers
 
-    -- ПРОВЕРКА: Если пассивная панель — это ПЛАГИН, копируем БЕЗ диалогов
+    -- CHECK: If the passive panel is a PLUGIN, copy WITHOUT dialogs
     if passive_info and (passive_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
         final_dest_path = default_dest
         export_as_scl = false
         skip_headers = false
     else
-        -- Если пассивная панель обычная — показываем наш вынесенный диалог
+        -- If the passive panel is a regular one, show our dedicated dialog
         final_dest_path, export_as_scl, skip_headers = manager.show_export_dialog(default_dest, is_move)
         if not final_dest_path then
-            return 0 -- Нажали отмену
+            return 0 -- Cancel was pressed
         end
     end
 
-    -- Запускаем физический экспорт
+    -- Run the physical export
     local success, processed_map = execute_export_logic(object, selected_items_table, is_move, final_dest_path, export_as_scl, skip_headers)
 
     if success then
@@ -297,7 +297,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
             successfully_written = successfully_written + 1
         end
 
-        -- Транзакционный обход для точечного снятия выделения
+        -- Transactional pass to selectively clear the selection
         panel.BeginSelection(handle, F.PANEL_ACTIVE)
         for i = 1, panel_info.ItemsNumber do
             local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
@@ -378,7 +378,7 @@ function M.GetFindData(object, handle, key_flags)
     end
 
     ---@type integer Current physical character width of column C0
-    local c0_width = 0 -- Ставим 0 как маркер того, что ширина еще не определена
+    local c0_width = 0 -- Use 0 as a marker meaning the width is not determined yet
 
     ---@type string|nil Comma-separated types layout string from LuaFAR
     local col_types_str = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
@@ -408,7 +408,7 @@ function M.GetFindData(object, handle, key_flags)
     for _, hobeta_file in ipairs(object.files_list) do
         local m = hobeta_file.meta
 
-        -- Форматируем расширение/тип строго по правилу 3-х печатных символов
+        -- Format the extension/type strictly per the 3-printable-character rule
         local type_str = ""
         local ext_str = m.ext or m.type or "C"
         if string.len(ext_str) == 3 then
@@ -427,7 +427,7 @@ function M.GetFindData(object, handle, key_flags)
             if spaces_count < 1 then spaces_count = 1 end
             combined_name_and_type = raw_name .. string.rep(" ", spaces_count) .. type_str
         else
-            -- Если c0_width == 0 (идет поиск OPM_FIND или фоновый кэш), выводим дефолт через 1 пробел
+            -- If c0_width == 0 (OPM_FIND search or background cache pass), fall back to a single space
             combined_name_and_type = raw_name .. " " .. type_str
         end
 
@@ -442,7 +442,7 @@ function M.GetFindData(object, handle, key_flags)
             FileName = m.display_name,
             FileSize = 17 + (m.sectors * SECTOR_SIZE),
             AllocationSize = m.sectors * SECTOR_SIZE,
-            FileAttributes = F.FILE_ATTRIBUTE_ARCHIVE,
+            FileAttributes = 0,
 
             CustomColumnData = {
                 combined_name_and_type, -- C0
@@ -466,7 +466,7 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
         local item_info = win.GetFileInfo(full_path)
 
         if item_info and string.find(item_info.FileAttributes, "d") then
-            -- Используем штатный far.RecursiveSearch для плоского сбора путей
+            -- Use the standard far.RecursiveSearch to flatly collect paths
             far.RecursiveSearch(full_path, "*", function(search_item, full_search_path)
                 if not string.find(search_item.FileAttributes, "d") then
                     table.insert(flat_files_paths, full_search_path)
@@ -477,13 +477,13 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
         end
     end
 
-    -- Создаем временную копию текущего списка файлов для валидации лимитов
+    -- Create a temporary copy of the current file list to validate limits
     local temp_files_list = {}
     for _, existing_file in ipairs(object.files_list) do
         table.insert(temp_files_list, existing_file)
     end
 
-    -- Прогоняем импорт во временный список
+    -- Run the import into the temporary list
     for _, file_path in ipairs(flat_files_paths) do
         local success, error_code = loader.load_file(temp_files_list, file_path, object)
         if not success then
@@ -499,7 +499,7 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
         return 0
     end
 
-    -- Если проверка пройдена, обновляем боевой список и сохраняем на диск
+    -- If validation passes, update the live list and save to disk
     object.files_list = temp_files_list
     scl_writer.save(object.archive_path, object.files_list, object)
     return 1
@@ -512,7 +512,7 @@ function M.DeleteFiles(object, handle, items_to_delete, op_flags)
         return false
     end
 
-    -- 1. Сбор карты имен с панели Far Manager (например, delete_map["DEMO.$C"] = true)
+    -- 1. Collect a name map from the Far Manager panel (e.g. delete_map["DEMO.$C"] = true)
     local delete_map = {}
     local count = #items_to_delete
     for i = 1, count do
@@ -522,10 +522,10 @@ function M.DeleteFiles(object, handle, items_to_delete, op_flags)
         end
     end
 
-    -- 2. Фильтрация списка файлов по их точному display_name
+    -- 2. Filter the file list by their exact display_name
     local kept_files = {}
     for _, hobeta_file in ipairs(object.files_list) do
-        -- Теперь сравниваются абсолютно идентичные строки, коллизия устранена!
+        -- Now comparing perfectly identical strings, the collision is resolved!
         if not delete_map[hobeta_file.meta.display_name] then
             table.insert(kept_files, hobeta_file)
         end
@@ -533,10 +533,10 @@ function M.DeleteFiles(object, handle, items_to_delete, op_flags)
 
     object.files_list = kept_files
     vfs_core.refresh_panel_metadata(object.files_list, nil)
-    -- Пересчитываем суффиксы для оставшихся файлов на панели
+    -- Recompute suffixes for the remaining files on the panel
     -- normalize_panel_filenames(object.files_list)
 
-    -- Физически сохраняем архив на диск через наш глобальный scl_writer
+    -- Physically save the archive to disk via our global scl_writer
     local save_ok, new_scl_path = scl_writer.save(object.archive_path, object.files_list, object)
     if save_ok and new_scl_path then
         object.archive_path = new_scl_path
@@ -549,18 +549,18 @@ end
 ---@param handle userdata The low-level Far Manager panel handle
 ---@return table info Configuration layout properties for Far Manager to render
 function M.GetOpenPanelInfo(object, handle)
-  -- 1. Принудительно обновляем данные из реестра/базы Far Manager перед выдачей инфо
+  -- 1. Force-refresh data from the Far Manager registry/database before returning info
   plugin_settings.load_settings()
 
-  -- [[ ПРАВИЛО: Вычисляем числовой ASCII-код режима БЕЗ приведения к строке string.char ]]
+  -- [[ RULE: Compute the numeric ASCII mode code WITHOUT converting to a string via string.char ]]
   local saved_mode_num = tonumber(plugin_settings.last_panel_mode) or 4
   if saved_mode_num < 3 or saved_mode_num > 6 then
       saved_mode_num = 4
   end
-  -- Маппим индекс режима на ASCII код символа: Режим 4 -> 0x30 + (4 - 1) = 0x33 ('3')
+  -- Map the mode index to the ASCII character code: Mode 4 -> 0x30 + (4 - 1) = 0x33 ('3')
   local start_mode_char_code = 0x30 + saved_mode_num
 
-  -- Описываем структуру колонок для каждого кастомного режима (m3, m4, m5, m6)
+  -- Describe the column layout for each custom mode (m3, m4, m5, m6)
   local m3 = {
     ColumnTypes = "N,C3,N,C3",
     ColumnWidths = "0,3,0,3",
@@ -602,7 +602,7 @@ function M.GetOpenPanelInfo(object, handle)
     Flags = 0,
   }
 
-  -- Массив режимов для LuaFAR (m3 встает на 4-ю позицию, m4 - на 5-ю)
+  -- Mode array for LuaFAR (m3 takes the 4th slot, m4 the 5th)
   local scl_panel_modes = {
     {}, {}, {}, m3, m4, m5, m6
   }
@@ -639,43 +639,34 @@ end
 ---@param param any Additional event parameter data
 ---@return boolean handled Returns true if the plugin fully processed the event, false otherwise
 function M.ProcessPanelEvent(object, handle, event, param)
-    -- ПРАВИЛО: Ловим событие смены режима панели (Ctrl+3 - Ctrl+6)
+    -- RULE: Catch the panel view-mode change event (Ctrl+3 - Ctrl+6)
     if event == F.FE_CHANGEVIEWMODE then
-        -- Принудительно заставляем Far Manager сбросить кэш CustomColumnData
-        -- Третий аргумент true заставляет ядро полностью зачистить старые строки C0
+        -- Force Far Manager to drop its CustomColumnData cache
+        -- The third argument true forces the core to fully clear the old C0 rows
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
-        return true -- Событие успешно обработано
-    -- elseif event == F.FE_REDRAW then
-    --     local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
-    --     local panel_mode = panel_info.ViewMode
-    --     if panel_mode == 4 then
-    --         panel.UpdatePanel(nil, F.PANEL_ACTIVE, true)
-    --         -- panel.RedrawPanel(nil, F.PANEL_ACTIVE)
-    --         return false
-    --     end
-    --     return false
+        return true -- Event handled successfully
     end
 
     return false
 end
 
 function M.ClosePanel(object, handle)
-    -- Вызываем GetPanelInfo СТРОГО с одним аргументом, как в оригинале!
+    -- Call GetPanelInfo with STRICTLY one argument, exactly as in the original!
     local info = panel.GetPanelInfo(handle)
 
     if info then
         plugin_settings.last_panel_mode = info.ViewMode
         plugin_settings.last_sort_mode = info.SortMode
 
-        -- Сверяем флаги с использованием правильной константы PFLAGS_REVERSESORTORDER
+        -- Check the flags using the correct PFLAGS_REVERSESORTORDER constant
         if info.Flags and F.PFLAGS_REVERSESORTORDER then
             plugin_settings.last_sort_order = (info.Flags & F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
         else
             plugin_settings.last_sort_order = 0
         end
 
-        -- Физически пишем плоские данные в реестр макросов
+        -- Physically write the flat data to the macro registry
         plugin_settings.save_settings()
     end
 end
@@ -689,7 +680,7 @@ local function show_rename_dialog(object, handle, m)
     local is_renamed = manager.show_attribute_dialog(m)
     if is_renamed then
         scl_writer.save(object.archive_path, object.files_list, object, true)
-        vfs_core.refresh_panel_metadata(object.files_list, nil, detector)
+        vfs_core.refresh_panel_metadata(object.files_list, nil)
 
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
@@ -760,7 +751,7 @@ end
 CommandLine {
   description = "SCL eXplorer";
   prefixes = "scl";
-  action = function(prefix,text)
+  action = function(prefix, text)
     return M, M.Open(F.OPEN_COMMANDLINE, nil, text)
   end;
 }
@@ -857,5 +848,5 @@ MenuItem {
     end
 }
 
--- Возвращаем модуль Far Manager напрямую
+-- Return the Far Manager module directly
 PanelModule(M)

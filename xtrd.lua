@@ -22,7 +22,7 @@ local loader  = require("theX.formats.loader")
 local settings_manager = require("theX.utils.settings_manager")
 local plugin_settings = settings_manager.new("xtrd")
 
--- Справочник UUID и констант
+-- UUID and constants reference
 local plugin_guid = win.Uuid("B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D")
 local SECTOR_SIZE = 256
 
@@ -293,18 +293,18 @@ M.Info = {
 ---@param handle userdata The low-level Far Manager panel handle
 ---@return table info Configuration layout properties for Far Manager to render
 function M.GetOpenPanelInfo(object, handle)
-  -- 1. Принудительно обновляем данные из реестра/базы Far Manager перед выдачей инфо
+  -- 1. Force-refresh data from the Far Manager registry/database before returning info
   plugin_settings.load_settings()
 
-  -- [[ ПРАВИЛО: Вычисляем числовой ASCII-код режима БЕЗ приведения к строке string.char ]]
+  -- [[ RULE: Compute the numeric ASCII mode code WITHOUT converting to a string via string.char ]]
   local saved_mode_num = tonumber(plugin_settings.last_panel_mode) or 4
   if saved_mode_num < 3 or saved_mode_num > 6 then
       saved_mode_num = 4
   end
-  -- Маппим индекс режима на ASCII код символа: Режим 4 -> 0x30 + (4 - 1) = 0x33 ('3')
+  -- Map the mode index to the ASCII character code: Mode 4 -> 0x30 + (4 - 1) = 0x33 ('3')
   local start_mode_char_code = 0x30 + saved_mode_num
 
-  -- Описываем структуру колонок для каждого кастомного режима (m3, m4, m5, m6)
+  -- Describe the column layout for each custom mode (m3, m4, m5, m6)
   local m3 = {
     ColumnTypes = "N,C3,N,C3",
     ColumnWidths = "0,3,0,3",
@@ -348,7 +348,7 @@ function M.GetOpenPanelInfo(object, handle)
     Flags = 0,
   }
 
-  -- Массив режимов для LuaFAR (m3 встает на 4-ю позицию, m4 - на 5-ю)
+  -- Mode array for LuaFAR (m3 takes the 4th slot, m4 the 5th)
   local trd_panel_modes = {
     {}, {}, {}, m3, m4, m5, m6
   }
@@ -989,13 +989,13 @@ end
 ---@param param any Additional event parameter data
 ---@return boolean handled Returns true if the plugin fully processed the event, false otherwise
 function M.ProcessPanelEvent(object, handle, event, param)
-    -- ПРАВИЛО: Ловим событие смены режима панели (Ctrl+3 - Ctrl+6)
+    -- RULE: Catch the panel view-mode change event (Ctrl+3 - Ctrl+6)
     if event == F.FE_CHANGEVIEWMODE then
-        -- Принудительно заставляем Far Manager сбросить кэш CustomColumnData
-        -- Третий аргумент true заставляет ядро полностью зачистить старые строки C0
+        -- Force Far Manager to drop its CustomColumnData cache
+        -- The third argument true forces the core to fully clear the old C0 rows
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
-        return true -- Событие успешно обработано
+        return true -- Event handled successfully
     -- elseif event == F.FE_REDRAW then
     --     local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
     --     local panel_mode = panel_info.ViewMode
@@ -1012,21 +1012,21 @@ end
 
 
 function M.ClosePanel(object, handle)
-    -- Вызываем GetPanelInfo СТРОГО с одним аргументом, как в оригинале!
+    -- Call GetPanelInfo with STRICTLY one argument, exactly as in the original!
     local info = panel.GetPanelInfo(handle)
 
     if info then
         plugin_settings.last_panel_mode = info.ViewMode
         plugin_settings.last_sort_mode = info.SortMode
 
-        -- Сверяем флаги с использованием правильной константы PFLAGS_REVERSESORTORDER
+        -- Check the flags using the correct PFLAGS_REVERSESORTORDER constant
         if info.Flags and F.PFLAGS_REVERSESORTORDER then
             plugin_settings.last_sort_order = (info.Flags & F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
         else
             plugin_settings.last_sort_order = 0
         end
 
-        -- Физически пишем плоские данные в реестр макросов
+        -- Physically write the flat data to the macro registry
         plugin_settings.save_settings()
     end
 end
@@ -1720,7 +1720,7 @@ MenuItem {
     area   = "Shell",
     -- Persistent unique RFC 4122 Version 4 UUID tracking registered specifically for our TRD VFS component
     guid   = "B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D",
-    text   = L.m_trd_menu_title, -- "TRD Image Options" / "Настройки TRD образов"
+    text   = L.m_trd_menu_title, -- "TRD Image Options" (localized via L.m_trd_menu_title)
     action = function()
         -- Load the most up-to-date states entries context maps straight from database
         -- We assume plugin_settings for TRD context is required or instantiated locally at the top

@@ -6,7 +6,7 @@ local SECTOR_SIZE = 256
 local MAX_SCL_FILES = 255
 local MAX_SCL_SIZE = 9 + (MAX_SCL_FILES * 14) + (MAX_SCL_FILES * 255 * 256) + 4
 
--- Вспомогательная функция проверки: является ли байт печатным ASCII символом
+-- Helper function checking whether a byte is a printable ASCII character
 ---@param byte integer
 ---@return boolean
 local function is_printable(byte)
@@ -99,7 +99,7 @@ function scl_reader.process(target_files_list, scl_path, object)
         local raw_name = string.sub(directory_buffer, offset + 1, offset + 8)
         local raw_type = string.sub(directory_buffer, offset + 9, offset + 9)
 
-        -- Сырые байты, следующие за типом (10-й и 11-й байты дескриптора)
+        -- Raw bytes following the type (the 10th and 11th descriptor bytes)
         local b10 = string.byte(directory_buffer, offset + 10)
         local b11 = string.byte(directory_buffer, offset + 11)
 

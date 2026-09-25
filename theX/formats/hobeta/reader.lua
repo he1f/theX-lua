@@ -3,7 +3,7 @@ local hobeta_reader = {}
 
 local MAX_HOBETA_SIZE = 17 + (255 * 256)
 
--- Вспомогательная функция проверки печатных символов ASCII
+-- Helper function checking for printable ASCII characters
 ---@param byte integer
 ---@return boolean
 local function is_printable(byte)
@@ -19,7 +19,7 @@ function hobeta_reader.is_valid(hobeta_path)
         return false, "ERR_CANNOT_OPEN_FILE"
     end
 
-    -- 1. Проверяем минимальный размер файла под HoBeta-заголовок (17 байт)
+    -- 1. Check the minimum file size against the HoBeta header (17 bytes)
     local file_len = file_handle:seek("end")
     file_handle:seek("set", 0)
 
@@ -40,7 +40,7 @@ function hobeta_reader.is_valid(hobeta_path)
         return false, "ERR_CORRUPTED_HEADER_CATALOG"
     end
 
-    -- 2. Проверяем целостность за счет валидации CRC
+    -- 2. Verify integrity via CRC validation
     local raw_15_bytes = string.sub(header, 1, 15)
     local original_crc = string.sub(header, 16, 17)
     local calculated_crc = hobeta_reader.calculate_crc(raw_15_bytes)
@@ -49,7 +49,7 @@ function hobeta_reader.is_valid(hobeta_path)
         return false, "ERR_CHECKSUM_MISMATCH"
     end
 
-    -- 3. Проверяем соответствие секторов физическому размеру файла на диске ПК
+    -- 3. Verify the sectors match the physical file size on the PC disk
     local sectors = string.byte(header, 15)
     local expected_file_size = 17 + (sectors * 256)
     if file_len < expected_file_size then
@@ -76,7 +76,7 @@ function hobeta_reader.process(target_files_list, hobeta_path, object)
     local raw_name = string.sub(header, 1, 8)
     local raw_type = string.sub(header, 9, 9)
 
-    -- Извлекаем сырые байты из заголовка
+    -- Extract raw bytes from the header
     local b9  = string.byte(raw_type)
     local b10 = string.byte(header, 10)
     local b11 = string.byte(header, 11)

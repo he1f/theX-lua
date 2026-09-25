@@ -80,16 +80,16 @@ function detector.enrich_file_meta(hobeta_file)
     local start_addr = tonumber(meta.start) or 0
     local sectors    = tonumber(meta.sectors) or 0
 
-    -- Инициализируем свойства отображения по умолчанию оригинальными значениями TR-DOS
+    -- Initialize default display properties using the original TR-DOS values
     meta.prefix = "$"
 
-    -- Очищаем оригинальный тип от пробелов для строгого регистрового сопоставления
+    -- Strip whitespace from the original type for strict case-sensitive matching
     local current_type = string.match(meta.type or "C", "^%s*(.-)%s*$") or "C"
 
     for _, rule in ipairs(rules) do
         local is_match = true
 
-        -- Строго регистрозависимое сравнение типов TR-DOS
+        -- Strictly case-sensitive comparison of TR-DOS types
         if rule.type then
             local rule_type_clean = string.match(rule.type, "^%s*(.-)%s*$") or rule.type
             if rule_type_clean ~= current_type then
@@ -97,13 +97,13 @@ function detector.enrich_file_meta(hobeta_file)
             end
         end
 
-        -- Сверка числовых параметров
+        -- Cross-check numeric parameters
         if is_match and rule.size and tonumber(rule.size) ~= size then is_match = false end
         if is_match and rule.no_secs and tonumber(rule.no_secs) ~= sectors then is_match = false end
         if is_match and rule.start and tonumber(rule.start) ~= start_addr then is_match = false end
         if is_match and rule.start_lt and start_addr >= tonumber(rule.start_lt) then is_match = false end
 
-        -- Сигнатурный анализ бинарного тела
+        -- Signature analysis of the binary body
         if is_match and rule.signatures then
             local sig_ok = false
             for _, sig in ipairs(rule.signatures) do
@@ -115,7 +115,7 @@ function detector.enrich_file_meta(hobeta_file)
             if not sig_ok then is_match = false end
         end
 
-        -- Если все критерии сошлись — обогащаем метаданные
+        -- If all criteria matched, enrich the metadata
         if is_match then
             if rule.description then
                 meta.description = parse_description_vars(binary_data, rule)

@@ -164,8 +164,8 @@ function dir_sys.compile(files_list, object)
     end
     for idx, folder in ipairs(folders) do
         if idx <= 127 then
-            -- Смещение +0x8B относительно начала 10-го сектора (11 байт заголовка + 128 байт файлов)
-            -- Внутри ds_bytes_tbl это индекс: 11 + 128 + (idx - 1) + 1 = 139 + idx
+            -- Offset +0x8B relative to the start of sector 10 (11 header bytes + 128 file bytes)
+            -- Inside ds_bytes_tbl this is the index: 11 + 128 + (idx - 1) + 1 = 139 + idx
             local dir_trdos_idx = 139 + idx
             ds_bytes_tbl[dir_trdos_idx] = folder.parent_id or 0
         end
