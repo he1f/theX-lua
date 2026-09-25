@@ -47,7 +47,7 @@ return {
     trd_msg_move_no_deleted      = "На диске нет удаленных файлов или каталогов. Операция MOVE пропущена.",
 
     m_menu_trd_create            = "Создать TRD образ диска...",
-    trd_msg_not_implemented      = "Эта функция на данный момент ещё не реализована.",
+    trd_msg_create_success       = "TRD образ диска успешно создан.",
 
 
     -- [[ TRD/SCL VIEW MODES COLUMNS TITLES ]]
@@ -65,9 +65,9 @@ return {
     io_msg_file_exists        = "Файл уже существует!",
     io_msg_filename           = "Имя: ",
     io_msg_current_on_disk    = "Текущий на диске:  %d байт, %s",
-    io_msg_new_from_archive   = "Новый из архива:   %d байт",
+    io_msg_new_from_archive   = "Новый:   %d байт",
     io_msg_overwrite_prompt   = "Желаете перезаписать его?",
-    io_title_scl_conflict     = "Конфликт SCL архива",
+    io_title_scl_conflict     = "Конфликт файлов",
     io_title_name_conflict    = "Конфликт имён",
     io_btn_overwrite          = "Перезаписать",
     io_btn_skip               = "Пропустить",

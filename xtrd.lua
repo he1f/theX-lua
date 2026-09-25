@@ -1657,6 +1657,93 @@ function M.ProcessPanelInput(object, handle, record)
     return false
 end
 
+--- Resolves a sensible default destination directory for newly created TRD disk images.
+--- Falls back to the plugin's own host file directory whenever the active panel is itself a virtual VFS layer.
+---@return string default_dir Absolute host OS directory path string to pre-fill the creation dialog
+local function resolve_active_panel_directory()
+    local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
+    if panel_info and (panel_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
+        local host_file = panel.GetPanelHostFile(nil, F.PANEL_ACTIVE)
+        if host_file and host_file ~= "" then
+            local dir = string.match(host_file, "^(.*)[\\/][^\\/]+$")
+            if dir and dir ~= "" then
+                return dir
+            end
+        end
+        return ""
+    end
+
+    local dir_info = panel.GetPanelDirectory(nil, F.PANEL_ACTIVE)
+    return dir_info and dir_info.Name or ""
+end
+
+--- Compiles, validates and physically initializes a brand-new empty TR-DOS TRD disk image on host storage.
+--- Never navigates into the freshly created image; only refreshes the surrounding host filesystem panels.
+---@return nil
+local function create_empty_trd_disk()
+    local default_dir = resolve_active_panel_directory()
+
+    local use_dirsys_setting = plugin_settings and plugin_settings.get("use_dirsys", true)
+    if use_dirsys_setting == nil then use_dirsys_setting = true end
+
+    local target_path, target_filename, disk_label, install_dirsys =
+        dialog_manager.show_create_trd_dialog(default_dir, "new_disk.trd", use_dirsys_setting)
+
+    if not target_path then return end
+
+    if not string.match(string.lower(target_filename), "%.trd$") then
+        target_filename = target_filename .. ".trd"
+    end
+
+    if string.sub(target_path, -1) ~= "\\" and string.sub(target_path, -1) ~= "/" then
+        target_path = target_path .. "\\"
+    end
+    local full_trd_path = target_path .. target_filename
+
+    -- [[ CHECK FOR EXISTING FILE COLLISION AND PROMPT VIA THE SHARED IO_MANAGER OVERWRITE DIALOG ]]
+    if win.GetFileInfo(full_trd_path) then
+        local conflict_state = { abort = false }
+        local placeholder_bytes = string.rep(" ", 80 * 2 * 16 * SECTOR_SIZE)
+        local allowed = io_manager.safe_write_file(full_trd_path, placeholder_bytes, conflict_state, true)
+        if not allowed then
+            return
+        end
+    end
+
+    -- Recode the freshly entered UTF-8 disk label straight back into raw TR-DOS CP866 bytes
+    local cp866_label = encoder.utf8_to_cp866(disk_label or "")
+    cp866_label = string.sub(cp866_label, 1, 11)
+    if string.len(cp866_label) < 11 then
+        cp866_label = cp866_label .. string.rep(" ", 11 - string.len(cp866_label))
+    end
+
+    local new_disk_object = {
+        archive_path = full_trd_path,
+        files_list   = {},
+        trd_info = {
+            disk_type     = 0x16, -- Standard 80 Tracks, Double-Sided (640 KB) geometry
+            label         = cp866_label,
+            deleted_files = 0,
+        }
+    }
+
+    if install_dirsys then
+        dir_sys.initialize_empty_system(new_disk_object)
+    end
+
+    local flush_success = trd_writer.save(full_trd_path, new_disk_object.files_list, new_disk_object, false)
+    if flush_success then
+        far.Message(L.trd_msg_create_success, L.m_menu_trd_create, L.m_btn_ok, "i")
+        -- Refresh both panels so the freshly minted disk image surfaces immediately if visible
+        panel.UpdatePanel(nil, F.PANEL_PASSIVE, true)
+        panel.RedrawPanel(nil, F.PANEL_PASSIVE)
+        panel.UpdatePanel(nil, F.PANEL_ACTIVE, true)
+        panel.RedrawPanel(nil, F.PANEL_ACTIVE)
+    else
+        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
+    end
+end
+
 -- [[ DECLARATIVE LUA_FAR INTERFACE INTEGRATION LAYER ]]
 MenuItem {
     menu   = "Plugins",
@@ -1706,8 +1793,8 @@ MenuItem {
             execute_trdos_move_compaction(p_info.PluginObject.object, nil)
 
         elseif chosen_pos == 2 then
-            -- [[ ACTION 2: TRD FILE GENERATOR FALLBACK PLACEHOLDER ]]
-            far.Message(L.trd_msg_not_implemented, L.m_menu_trd_create, L.m_btn_ok, "i")
+            -- [[ ACTION 2: CREATE A NEW EMPTY TRD DISK IMAGE ]]
+            create_empty_trd_disk()
         end
 
         return nil

@@ -12,6 +12,12 @@ return {
     dlg_rename_folder_title = "Переименование папки",
     dlg_rename_folder_lbl   = "Введите новое имя папки:",
 
+    dlg_create_trd_title       = "Создание TRD образа",
+    dlg_create_trd_path_lbl    = "Путь назначения:",
+    dlg_create_trd_name_lbl    = "&Имя файла:",
+    dlg_create_trd_label_lbl   = "&Метка диска:",
+    dlg_create_trd_dirsys_chk  = "&Установить DirSys 1.0",
+
     dlg_export_title_move = "Перемещение",
     dlg_export_title_copy = "Копирование",
     dlg_export_label_move = "Переместить &в:",

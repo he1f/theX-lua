@@ -12,6 +12,12 @@ return {
     dlg_rename_folder_title = "Rename Folder",
     dlg_rename_folder_lbl   = "Enter new folder name:",
 
+    dlg_create_trd_title       = "Create TRD disk image",
+    dlg_create_trd_path_lbl    = "Destination path:",
+    dlg_create_trd_name_lbl    = "File &name:",
+    dlg_create_trd_label_lbl   = "Disk &label:",
+    dlg_create_trd_dirsys_chk  = "&Install DirSys 1.0",
+
     dlg_export_title_move = "Move",
     dlg_export_title_copy = "Copy",
     dlg_export_label_move = "Move &to:",

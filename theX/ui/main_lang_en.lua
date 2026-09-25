@@ -51,7 +51,7 @@ return {
     trd_msg_move_no_deleted      = "There are no deleted files or folders on this disk. Move operation skipped.",
 
     m_menu_trd_create            = "Create TRD disk image...",
-    trd_msg_not_implemented      = "This feature is currently not implemented yet.",
+    trd_msg_create_success       = "TRD disk image created successfully.",
 
 
     -- [[ TRD/SCL VIEW MODES COLUMNS TITLES ]]
@@ -69,9 +69,9 @@ return {
     io_msg_file_exists        = "File already exists!",
     io_msg_filename           = "Name: ",
     io_msg_current_on_disk    = "Current on disk: %d bytes, %s",
-    io_msg_new_from_archive   = "New from archive:  %d bytes",
+    io_msg_new_from_archive   = "New:  %d bytes",
     io_msg_overwrite_prompt   = "Do you want to overwrite it?",
-    io_title_scl_conflict     = "SCL Archive Conflict",
+    io_title_scl_conflict     = "File Conflict",
     io_title_name_conflict    = "Name Conflict",
     io_btn_overwrite          = "Overwrite",
     io_btn_skip               = "Skip",

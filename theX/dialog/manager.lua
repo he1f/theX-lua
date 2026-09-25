@@ -270,5 +270,48 @@ function manager.show_rename_folder_dialog(current_name)
     return new_name
 end
 
+--- Displays the interactive TRD disk image creation dialog (Config menu -> Create TRD disk image...).
+---@param default_path string Initial destination directory suggested from the active/passive panel context
+---@param default_filename string Initial suggested target TRD file name
+---@param dirsys_available boolean Whether the "Install DirSys 1.0" checkbox should be enabled for interaction
+---@return string|nil target_path Absolute destination directory path, or nil if cancelled
+---@return string|nil target_filename Target TRD file name (with extension), or nil if cancelled
+---@return string|nil disk_label Raw UTF-8 disk label text entered by the user
+---@return boolean|nil install_dirsys True if the user requested a DirSys 1.0 layout to be pre-initialized
+function manager.show_create_trd_dialog(default_path, default_filename, dirsys_available)
+    -- Grey out and lock the checkbox entirely whenever the DirSys extension is disabled plugin-wide
+    local dirsys_flags = dirsys_available and 0 or F.DIF_DISABLE
+
+    local dialog_items = {
+        { F.DI_DOUBLEBOX,   3,  1, 68, 11, 0, "", "", 0, L.dlg_create_trd_title },
+        { F.DI_TEXT,        5,  2,  0,  2, 0, "", "", 0, L.dlg_create_trd_path_lbl },
+        { F.DI_EDIT,        5,  3, 66,  3, 0, "xtrd_create_path_history", "", F.DIF_HISTORY + F.DIF_FOCUS, default_path or "" },
+        { F.DI_TEXT,        5,  4,  0,  4, 0, "", "", 0, L.dlg_create_trd_name_lbl },
+        { F.DI_EDIT,        5,  5, 66,  5, 0, "", "", 0, default_filename or "new_disk.trd" },
+        { F.DI_TEXT,        5,  6,  0,  6, 0, "", "", 0, L.dlg_create_trd_label_lbl },
+        { F.DI_EDIT,        5,  7, 35,  7, 0, "", "", 0, "", 11 },
+        { F.DI_CHECKBOX,    5,  8,  0,  8, 0, "", "", dirsys_flags, L.dlg_create_trd_dirsys_chk },
+        { F.DI_TEXT,        5,  9,  0,  9, 0, "", "", F.DIF_SEPARATOR, "" },
+        { F.DI_BUTTON,      0, 10,  0, 10, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, L.m_btn_create },
+        { F.DI_BUTTON,      0, 10,  0, 10, 0, "", "", F.DIF_CENTERGROUP, L.m_btn_cancel },
+    }
+
+    local dialog_id = win.Uuid("E5F6A7B8-C9D0-4E1F-2A3B-4C5D6E7F8A9B")
+    local dlg_result = far.Dialog(dialog_id, -1, -1, 72, 13, nil, dialog_items)
+
+    if dlg_result == -1 or dlg_result == 11 then return nil end
+
+    local target_path = string.match(dialog_items[3][10] or "", "^%s*(.-)%s*$")
+    local target_filename = string.match(dialog_items[5][10] or "", "^%s*(.-)%s*$")
+    local disk_label = string.match(dialog_items[7][10] or "", "^%s*(.-)%s*$")
+    local install_dirsys = dirsys_available and (dialog_items[8][6] == 1 or dialog_items[8][6] == true)
+
+    if not target_path or target_path == "" or not target_filename or target_filename == "" then
+        return nil
+    end
+
+    return target_path, target_filename, disk_label or "", install_dirsys
+end
+
 
 return manager
