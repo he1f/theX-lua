@@ -15,11 +15,11 @@ local dir_sys = require("theX.formats.trd.dir_sys")
 ---@param type_byte integer The raw byte read from 0xE3 offset inside sector 9
 ---@return integer total_sectors Total number of 256-byte sectors matching this geometry
 local function resolve_total_sectors(type_byte)
-    if type_byte == 0x16 then return 40 * 1 * 16   -- 40 tracks, single-sided (160KB)
+    if type_byte == 0x16 then return 80 * 2 * 16 -- 0x19: 80 tracks, double-sided (640KB - Standard Default)
     elseif type_byte == 0x17 then return 40 * 2 * 16 -- 40 tracks, double-sided (320KB)
     elseif type_byte == 0x18 then return 80 * 1 * 16 -- 80 tracks, single-sided (320KB)
     end
-    return 80 * 2 * 16 -- 0x19: 80 tracks, double-sided (640KB - Standard Default)
+    return 40 * 1 * 16   -- 40 tracks, single-sided (160KB)
 end
 
 --- Commits the current active VFS memory cache state onto physical TRD track sector image storage.
