@@ -192,7 +192,7 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
                     -- Файл пропущен по кнопке "Пропустить/Пропустить Все".
                     -- Мы НЕ добавляем его в processed_map, поэтому он ОСТАНЕТСЯ выделенным!
                 elseif not conflict_state.abort then
-                    far.Message("Не удалось записать файл: " .. current_filename, "Ошибка I/O", "ОК", "w")
+                    far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
                 end
             end
         end
@@ -496,7 +496,7 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
     end
 
     if #temp_files_list > 255 then
-        far.Message("Ошибка:    Превышен лимит файлов в SCL. Копирование отменено.", "SCL Error", "ОК", "w")
+        far.Message(L.scl_err_max_files_limit, L.trd_title_import_err, L.m_btn_ok, "w")
         return 0
     end
 
@@ -507,7 +507,8 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
 end
 
 function M.DeleteFiles(object, handle, items_to_delete, op_flags)
-    local code = far.Message("Вы уверены, что хотите удалить выбранные файлы из SCL?", "Удаление", "Да;Нет", "w")
+    local msg_buttons = L.m_btn_ok .. ";" .. L.m_btn_cancel
+    local code = far.Message(L.trd_dlg_delete_confirm, L.trd_dlg_delete_title, msg_buttons, "w")
     if code ~= 1 then
         return false
     end
@@ -834,7 +835,7 @@ MenuItem {
             end
         elseif chosen_pos == 2 then
             -- [[ ACTION 2: CREATE EMPTY SCL ARCHIVE ]]
-            local target_filename = dialog_manager.show_create_scl_dialog()
+            local target_filename =   manager.show_create_scl_dialog()
             if target_filename and target_filename ~= "" then
                 target_filename = string.match(target_filename, '^%s*"?([^"]+)"?%s*$') or target_filename
                 if not string.match(string.lower(target_filename), "%.scl$") then

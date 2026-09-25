@@ -80,6 +80,7 @@ return {
 
     trd_err_put_dirsys_disabled = "Cannot import directories. DirSys folder extension is disabled.",
     trd_err_max_files_limit   = "Failed to import. TRD disk limits exceeded (Maximum 128 files allowed).",
+    scl_err_max_files_limit   = "Failed to import. SCL archive limits exceeded (Maximum 255 files allowed).",
     trd_err_max_folders_limit = "Failed to import. DirSys catalog limits exceeded (Maximum 127 folders allowed).",
     trd_err_disk_full         = "Failed to import. Not enough free space on TRD disk image.\nRequired: %d sectors, Available: %d sectors.",
     trd_title_import_err      = "Import Error",
