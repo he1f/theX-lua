@@ -9,6 +9,9 @@ return {
     dlg_lbl_trdos_type    = "&Тип:",
     dlg_lbl_trdos_start   = "&Стартовый:",
 
+    dlg_rename_folder_title = "Переименование папки",
+    dlg_rename_folder_lbl   = "Введите новое имя папки:",
+
     dlg_export_title_move = "Перемещение",
     dlg_export_title_copy = "Копирование",
     dlg_export_label_move = "Переместить &в:",

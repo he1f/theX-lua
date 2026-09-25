@@ -5,6 +5,7 @@ local localization = {}
 local component_modules = {
     "theX.ui.main_lang",       -- Core GUI labels (old general strings layout)
     "theX.dialog.lang",
+    "theX.formats.trd.lang",
     "theX.formats.raw.lang",   -- RAW format specific strings
 }
 

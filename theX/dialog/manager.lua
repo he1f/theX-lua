@@ -1,6 +1,7 @@
 local manager = {}
 local F = far.Flags
 local L = require("theX.ui.localization")
+local encoding = require("theX.utils.encoding")
 
 -- [[ DIALOG INDEX MAPPINGS CONSTRAINTS ]]
 local ID_DEST_EDIT = 3
@@ -81,6 +82,8 @@ local function rename_dialog_handler(h_dlg, msg, param1, param2)
             local new_start = tonumber(new_start_str) or 0
 
             new_name = string.match(new_name, "^%s*(.-)%s*$") or new_name
+            -- Recode the freshly typed UTF-8 dialog text back into raw single-byte TR-DOS CP866 bytes
+            new_name = encoding.utf8_to_cp866(new_name)
             new_name = string.sub(new_name, 1, 8)
             if string.len(new_name) < 8 then
                 new_name = new_name .. string.rep(" ", 8 - string.len(new_name))
@@ -242,6 +245,29 @@ function manager.show_create_folder_dialog()
 
     if dlg_result == -1 or dlg_result == 6 then return nil end
     return dialog_items[3][10]
+end
+
+--- Displays the interactive DirSys folder rename input dialog (Shift+F6 over a subdirectory).
+---@param current_name string Current UTF-8 display name of the target DirSys folder entry
+---@return string|nil new_name Returns cleaned target text string, or nil if cancelled
+function manager.show_rename_folder_dialog(current_name)
+    local dialog_items = {
+        { F.DI_DOUBLEBOX,   3,  1, 60,  6, 0, "", "", 0, L.dlg_rename_folder_title },
+        { F.DI_TEXT,        5,  2,  0,  2, 0, "", "", 0, L.dlg_rename_folder_lbl },
+        { F.DI_EDIT,        5,  3, 58,  3, 0, "", "", F.DIF_FOCUS, current_name or "" },
+        { F.DI_TEXT,        5,  4,  0,  4, 0, "", "", F.DIF_SEPARATOR, "" },
+        { F.DI_BUTTON,      0,  5,  0,  5, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, L.m_btn_save },
+        { F.DI_BUTTON,      0,  5,  0,  5, 0, "", "", F.DIF_CENTERGROUP, L.m_btn_cancel },
+    }
+
+    local dialog_id = win.Uuid("C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F")
+    local dlg_result = far.Dialog(dialog_id, -1, -1, 64, 8, nil, dialog_items)
+
+    if dlg_result == -1 or dlg_result == 6 then return nil end
+
+    local new_name = string.match(dialog_items[3][10] or "", "^%s*(.-)%s*$")
+    if not new_name or new_name == "" then return nil end
+    return new_name
 end
 
 

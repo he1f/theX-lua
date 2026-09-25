@@ -9,6 +9,9 @@ return {
     dlg_lbl_trdos_type    = "&Type:",
     dlg_lbl_trdos_start   = "&Start:",
 
+    dlg_rename_folder_title = "Rename Folder",
+    dlg_rename_folder_lbl   = "Enter new folder name:",
+
     dlg_export_title_move = "Move",
     dlg_export_title_copy = "Copy",
     dlg_export_label_move = "Move &to:",

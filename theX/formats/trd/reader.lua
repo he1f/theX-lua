@@ -39,7 +39,6 @@ function trd_reader.is_valid(trd_path)
     -- Offset: 8 sectors * 256 bytes = 2048 bytes (0x800)
     file_handle:seek("set", 2048)
     local sys_sector = file_handle:read(256)
-    file_handle:close()
 
     local free_sector = string.byte(sys_sector, 0xE1 + 1) or 0
     local free_track  = string.byte(sys_sector, 0xE2 + 1) or 1

@@ -1526,9 +1526,52 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
     end
 end
 
+--- Compiles and triggers the standalone TR-DOS file attribute editor modal, persisting changes back to disk.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param m table Target file metadata reference block dict
+---@return nil
+local function show_rename_file_dialog(object, handle, m)
+    local is_renamed = dialog_manager.show_attribute_dialog(m)
+    if is_renamed then
+        trd_writer.save(object.archive_path, object.files_list, object, true)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+    end
+end
+
+--- Compiles and triggers the standalone DirSys folder rename modal, persisting changes back to disk.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param folder table Target DirSys folder reference block dict
+---@return nil
+local function show_rename_folder_dialog(object, handle, folder)
+    local new_name = dialog_manager.show_rename_folder_dialog(folder.display_name or "")
+    if not new_name then return end
+
+    -- Recode the freshly entered UTF-8 dialog text straight back into raw TR-DOS CP866 bytes
+    local cp866_name = encoder.utf8_to_cp866(new_name)
+    cp866_name = string.sub(cp866_name, 1, 11)
+    if string.len(cp866_name) < 11 then
+        cp866_name = cp866_name .. string.rep(" ", 11 - string.len(cp866_name))
+    end
+
+    folder.name = cp866_name
+
+    local flush_success = trd_writer.save(object.archive_path, object.files_list, object, false)
+    if flush_success then
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+    else
+        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
+    end
+end
 
 ---@param object table The plugin instance table mapping panel state
----@param handle userdata The low-level Far Manager panel handle context pointer
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
 ---@param record table System structure carrying input event metrics
 ---@return boolean handled Always returns false to let Far complete its native updates natively
 function M.ProcessPanelInput(object, handle, record)
@@ -1553,6 +1596,62 @@ function M.ProcessPanelInput(object, handle, record)
                     if existing_idx then table.remove(object.selection_order, existing_idx) end
                 else
                     if not existing_idx then table.insert(object.selection_order, current_item.FileName) end
+                end
+            end
+        end
+
+        -- [[ HOOK 2: INTERCEPT INTERACTIVE RENAME (Shift + F6) ]]
+        -- F6 key code is 0x75. Verify that Shift state bitmask modifier is active
+        -- NOTE: panel.GetCurrentPanelItem() reconstructs the item from Far Manager's native
+        -- PluginPanelItem struct, so only genuine Far fields (FileName, FileAttributes, ...)
+        -- survive the round-trip. Custom keys we stash on far_items in GetFindData (e.g.
+        -- _is_dir_sys, _dir_sys_id, _trdos_index) do NOT come back here, so we must resolve
+        -- the target the same way M.GetFiles/M.DeleteFiles already do: by name + attributes.
+        local is_shift = (ctrl_state & F.SHIFT_PRESSED ~= 0)
+        if v_key == 0x75 and is_shift then
+            local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
+
+            if current_item and current_item.FileName and current_item.FileName ~= ".." then
+                local attr_str = current_item.FileAttributes or ""
+                local is_dir = string.match(attr_str, "d") ~= nil
+
+                if is_dir then
+                    -- Locate the matched DirSys folder entry inside the active cache by name at the current level
+                    local target_folder = nil
+                    if object.trd_folders then
+                        for _, folder in ipairs(object.trd_folders) do
+                            if not folder.deleted and folder.parent_id == object.current_folder_id and folder.display_name == current_item.FileName then
+                                target_folder = folder
+                                break
+                            end
+                        end
+                    end
+
+                    if target_folder then
+                        -- Trigger our linked interactive folder rename modal dialog
+                        show_rename_folder_dialog(object, handle, target_folder)
+                        -- Return true to completely absorb the Shift+F6 event so Far doesn't spawn its native rename box
+                        return true
+                    end
+                else
+                    -- Locate the matched metadata dictionary inside cache using current filename string index
+                    local target_meta = nil
+                    if object.files_list then
+                        for _, hobeta_file in ipairs(object.files_list) do
+                            local m = hobeta_file.meta
+                            if m and not m.deleted and m.display_name == current_item.FileName then
+                                target_meta = m
+                                break
+                            end
+                        end
+                    end
+
+                    if target_meta then
+                        -- Trigger our linked interactive editor modal dialog
+                        show_rename_file_dialog(object, handle, target_meta)
+                        -- Return true to completely absorb the Shift+F6 event so Far doesn't spawn its native rename box
+                        return true
+                    end
                 end
             end
         end
