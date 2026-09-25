@@ -1,6 +1,6 @@
 local vfs_core = {}
 local enc = require("theX.utils.encoding")
-local detector = require("theX.detector")
+local detector = require("theX.utils.detector")
 
 -- [[ Authority local patterns registers mapping system constants ]]
 local forbidden_chars_pattern = "[\\/%:%*%?\"<>|]"
@@ -73,8 +73,7 @@ end
 --- Processes raw CP866 entries for both files and DirSys folders to set initial UTF-8 structures.
 ---@param files_list table[] Sequential array of files loaded from the TRD sectors
 ---@param folders_list table[] | nil Sequential array of DirSys directory blocks
----@param detector table Enrichment plugin to parse Spectrum data types descriptions
-function vfs_core.refresh_panel_metadata(files_list, folders_list, detector)
+function vfs_core.refresh_panel_metadata(files_list, folders_list)
     -- [[ STAGE 1: CONVERT AND SANITIZE DIRECTORIES STRINGS FROM CP866 TO UTF-8 ]]
     if folders_list then
         for _, folder in ipairs(folders_list) do

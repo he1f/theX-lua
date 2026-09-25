@@ -1,7 +1,7 @@
 local trd_reader = {}
 local hobeta_reader = require("theX.formats.hobeta.reader")
 local dir_sys = require("theX.formats.trd.dir_sys")
-local settings_manager = require("theX.settings_manager")
+local settings_manager = require("theX.utils.settings_manager")
 local plugin_settings = settings_manager.new("xtrd")
 
 

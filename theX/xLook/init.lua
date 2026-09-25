@@ -1,7 +1,7 @@
 xlook_plugin = {}
 
 local hobeta_reader = require("theX.formats.hobeta.reader")
-local detector = require("theX.detector")
+local detector = require("theX.utils.detector")
 local asm_pipeline = require("theX.xLook.decoder_pipeline")
 local basic_decoder = require("theX.xLook.basic")
 local L = require("theX.ui.localization")
@@ -25,7 +25,7 @@ function xlook_plugin.process_and_edit_file(file_path)
     end
 
     local temp_files_list = {}
-    hobeta_reader.process(temp_files_list, file_path)
+    hobeta_reader.process(temp_files_list, file_path, {})
 
     -- In HoBeta single-file reading flows, the first index element represents our active entry
     local target_file = temp_files_list[1]

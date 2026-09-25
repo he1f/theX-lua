@@ -16,14 +16,13 @@ local scl_writer = require("theX.formats.scl.writer")
 local hobeta_reader = require("theX.formats.hobeta.reader")
 local loader = require("theX.formats.loader")
 
-local io_manager = require("theX.io_manager")
+local io_manager = require("theX.utils.io_manager")
 local manager = require("theX.dialog.manager")
 
-local detector = require("theX.detector")
-local vfs_core = require("theX.trdos_vfs_core")
+local vfs_core = require("theX.utils.trdos_vfs_core")
 local gui = require("theX.utils.gui_operations")
 
-local settings_manager = require("theX.settings_manager")
+local settings_manager = require("theX.utils.settings_manager")
 local plugin_settings = settings_manager.new("xscl")
 
 
@@ -375,7 +374,7 @@ function M.GetFindData(object, handle, key_flags)
             object.files_list[i] = nil
         end
         scl_reader.process(object.files_list, object.archive_path, object)
-        vfs_core.refresh_panel_metadata(object.files_list, nil, detector)
+        vfs_core.refresh_panel_metadata(object.files_list, nil)
     end
 
     ---@type integer Current physical character width of column C0
@@ -533,7 +532,7 @@ function M.DeleteFiles(object, handle, items_to_delete, op_flags)
     end
 
     object.files_list = kept_files
-    vfs_core.refresh_panel_metadata(object.files_list, nil, detector)
+    vfs_core.refresh_panel_metadata(object.files_list, nil)
     -- Пересчитываем суффиксы для оставшихся файлов на панели
     -- normalize_panel_filenames(object.files_list)
 

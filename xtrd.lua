@@ -12,15 +12,14 @@ local trd_reader = require("theX.formats.trd.reader")
 local dir_sys = require("theX.formats.trd.dir_sys")
 local trd_writer = require("theX.formats.trd.writer")
 local scl_writer = require("theX.formats.scl.writer")
-local vfs_core = require("theX.trdos_vfs_core")
-local detector = require("theX.detector")
+local vfs_core = require("theX.utils.trdos_vfs_core")
 local dialog_manager = require("theX.dialog.manager")
 local gui = require("theX.utils.gui_operations")
-local io_manager = require("theX.io_manager")
+local io_manager = require("theX.utils.io_manager")
 local encoder = require("theX.utils.encoding")
 local loader  = require("theX.formats.loader")
 
-local settings_manager = require("theX.settings_manager")
+local settings_manager = require("theX.utils.settings_manager")
 local plugin_settings = settings_manager.new("xtrd")
 
 -- Справочник UUID и констант
@@ -496,7 +495,7 @@ function M.Open(open_from, guid, item)
     trd_reader.process(object.files_list, item, object)
 
     -- Run the global normalizer pipeline to resolve display name collisions and enrich metadata
-    vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+    vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
 
     -- Return the compiled session context object pointer.
     -- Far Manager core natively transforms this table to construct active VFS frames
@@ -516,9 +515,8 @@ function M.GetFindData(object, handle, key_flags)
         for i = #object.files_list, 1, -1 do
             object.files_list[i] = nil
         end
-        -- Re-read actual sectors tracking metrics and re-run detector normalizers
         trd_reader.process(object.files_list, object.archive_path, object)
-        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
     end
 
     if not object.current_folder_id then
@@ -1535,7 +1533,7 @@ local function show_rename_file_dialog(object, handle, m)
     local is_renamed = dialog_manager.show_attribute_dialog(m)
     if is_renamed then
         trd_writer.save(object.archive_path, object.files_list, object, true)
-        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
 
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
@@ -1562,7 +1560,7 @@ local function show_rename_folder_dialog(object, handle, folder)
 
     local flush_success = trd_writer.save(object.archive_path, object.files_list, object, false)
     if flush_success then
-        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders, detector)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
     else
