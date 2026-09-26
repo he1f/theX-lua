@@ -1362,7 +1362,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
         M.DeleteFiles(object, handle, items_to_move, op_flags | F.OPM_SILENT)
     end
 
-    return 0
+    return 1
 end
 
 
