@@ -41,6 +41,22 @@ M.Info = {
   Author = "Dima Kozlov",
 }
 
+--- Compiles and renders the stateful VFS attribute editor frame with standalone type field.
+---@param object table The plugin instance table mapping panel state
+---@param handle userdata The active panel pointer context
+---@param m table Target file metadata reference block dict
+---@return nil
+local function show_rename_dialog(object, handle, m)
+    local is_renamed = manager.show_attribute_dialog(m)
+    if is_renamed then
+        scl_writer.save(object.archive_path, object.files_list, object, true)
+        vfs_core.refresh_panel_metadata(object.files_list, nil)
+
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+    end
+end
+
 -- Safely retrieve the panel directory (handling a plugin host file)
 local function get_panel_dir(panel_type_flag)
     local p_info = panel.GetPanelInfo(nil, panel_type_flag)
@@ -670,24 +686,6 @@ function M.ClosePanel(object, handle)
         plugin_settings.save_settings()
     end
 end
-
---- Compiles and renders the stateful VFS attribute editor frame with standalone type field.
----@param object table The plugin instance table mapping panel state
----@param handle userdata The active panel pointer context
----@param m table Target file metadata reference block dict
----@return nil
-local function show_rename_dialog(object, handle, m)
-    local is_renamed = manager.show_attribute_dialog(m)
-    if is_renamed then
-        scl_writer.save(object.archive_path, object.files_list, object, true)
-        vfs_core.refresh_panel_metadata(object.files_list, nil)
-
-        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
-        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
-    end
-end
-
-
 
 ---@param object table The plugin instance table mapping panel state
 ---@param handle userdata The low-level Far Manager panel handle context pointer

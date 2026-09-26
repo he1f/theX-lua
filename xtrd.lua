@@ -26,6 +26,94 @@ local plugin_settings = settings_manager.new("xtrd")
 local plugin_guid = win.Uuid("B4C1D2A3-E5F6-4A7B-8C9D-0E1F2A3B4C5D")
 local SECTOR_SIZE = 256
 
+--- Collects all nested subdirectory IDs under the specified target folder nodes recursively.
+---@param folders table[] Cached list array of active DirSys directories mapping properties
+---@param initial_delete_ids table<integer, boolean> Lookup hash set containing folder IDs selected for deletion
+---@return table<integer, boolean> cascade_delete_ids Complete populated lookup map of all target deleted catalog IDs
+local function collect_cascade_folder_ids(folders, initial_delete_ids)
+    local deleted_map = {}
+    for id, state in pairs(initial_delete_ids) do
+        deleted_map[id] = state
+    end
+
+    local scan_needed = true
+    -- Loop down the tree layout branches layer by layer until no more children are gathered
+    while scan_needed do
+        scan_needed = false
+        for _, folder in ipairs(folders) do
+            local f_id = folder.id
+            local p_id = folder.parent_id or 0
+
+            -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
+            -- If parent folder is already marked for deletion, but child isn't collected yet
+            if deleted_map[p_id] and not deleted_map[f_id] and not folder.deleted then
+                deleted_map[f_id] = true
+                scan_needed = true -- Trigger another deep scan iteration loop sweep
+            end
+        end
+    end
+
+    return deleted_map
+end
+
+--- Recursive helper to gather all active subfolders and files nested inside a specific DirSys parent folder.
+---@param object table The active parent plugin panel context mapping states
+---@param parent_id integer The unique folder ID node to crawl down from
+---@param relative_sub_path string Accumulated folder path trail segment string (e.g. "GAMES\ACTION")
+---@param out_payload_queue table Array container to accumulate extraction tasks structures
+local function gather_nested_extraction_tree(object, parent_id, relative_sub_path, out_payload_queue)
+    if object.files_list then
+        for _, hobeta_file in ipairs(object.files_list) do
+            local m = hobeta_file.meta
+            if m and not m.deleted then
+                -- Resolve file parent directory container index position without _trdos_index fields
+                -- We locate the index of the file in the master files_list by sequential verification
+                local file_trdos_idx = nil
+                for f_idx, search_file in ipairs(object.files_list) do
+                    if search_file == hobeta_file then
+                        file_trdos_idx = f_idx - 1
+                        break
+                    end
+                end
+
+                local file_parent_id = 0
+                if file_trdos_idx and object.trd_file_maps and object.trd_file_maps[file_trdos_idx] then
+                    file_parent_id = object.trd_file_maps[file_trdos_idx]
+                end
+
+                if file_parent_id == parent_id then
+                    table.insert(out_payload_queue, {
+                        is_directory  = false,
+                        display_name  = m.display_name,
+                        relative_path = relative_sub_path,
+                        header        = hobeta_file.header or "",
+                        data          = hobeta_file.data or ""
+                    })
+                end
+            end
+        end
+    end
+
+    if object.trd_folders then
+        for _, folder in ipairs(object.trd_folders) do
+            if not folder.deleted and folder.parent_id == parent_id then
+                local folder_display = folder.display_name or "NEW_FOLDER"
+                local appended_sub_path = relative_sub_path == "" and folder_display or (relative_sub_path .. "\\" .. folder_display)
+
+                table.insert(out_payload_queue, {
+                    is_directory  = true,
+                    display_name  = folder_display,
+                    relative_path = relative_sub_path,
+                    header        = "",
+                    data          = ""
+                })
+
+                gather_nested_extraction_tree(object, folder.id, appended_sub_path, out_payload_queue)
+            end
+        end
+    end
+end
+
 --- Private helper to recursively trace parent IDs and compile a multi-level nested folder path string.
 ---@param folders table[] The sequential cached array of active DirSys directories mapping properties
 ---@param folder_id integer The targeted subdirectory entry identifier we want to trace from
@@ -68,9 +156,8 @@ end
 --- Executes full TR-DOS MOVE compaction process, physically erasing 0x01 flagged assets
 --- and shifting sectors arrays blocks down to eliminate fragmentation gaps.
 ---@param object table The active parent plugin panel context mapping states
----@param handle userdata Low-level Far Manager panel frame handle context pointer
 ---@return nil
-local function execute_trdos_move_compaction(object, handle)
+local function execute_trdos_move_compaction(object)
     if not object or not object.files_list then return end
 
     -- Verify if there are any deleted assets present before initiating disk heavy operations
@@ -177,8 +264,8 @@ local function execute_trdos_move_compaction(object, handle)
     if flush_success then
         far.Message(L.trd_msg_move_success, L.m_trd_menu_title, L.m_btn_ok, "i")
         -- Force low-level frame update queues triggers to surface shifts rows results
-        panel.UpdatePanel(handle, F.PANEL_ACTIVE)
-        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(nil, F.PANEL_ACTIVE)
+        panel.RedrawPanel(nil, F.PANEL_ACTIVE)
     else
         far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
     end
@@ -188,13 +275,12 @@ end
 
 --- Traverses the local Windows filesystem tree layout, dynamically registering new DirSys folder nodes
 --- and preparing standalone queue structures for structural files allocation loops.
----@param object table The active parent plugin panel context mapping states
 ---@param pc_root_path string Full absolute host filesystem pathway where the target folder resides
 ---@param target_parent_id integer The unique virtual directory ID code inside which assets are dropped
 ---@param temp_folders table[] Temporary working array cloning active DirSys subdirectories states
 ---@param import_queue table Array container to accumulate prepared file import metadata tracks
 ---@return boolean success Returns true if the path structural tree was compiled without boundaries failures
-local function harvest_pc_import_tree(object, pc_root_path, target_parent_id, temp_folders, import_queue)
+local function harvest_pc_import_tree(pc_root_path, target_parent_id, temp_folders, import_queue)
     local win_flags = 0 -- Default standard behavior for far.RecursiveSearch execution
 
     -- Leverage the native Far core background unmanaged filesystem crawler engine
@@ -278,7 +364,51 @@ local function harvest_pc_import_tree(object, pc_root_path, target_parent_id, te
     return true
 end
 
--- Публичный неймспейс плагина (сюда пишем ТОЛЬКО экспортируемые методы)
+--- Compiles and triggers the standalone TR-DOS file attribute editor modal, persisting changes back to disk.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param m table Target file metadata reference block dict
+---@return nil
+local function show_rename_file_dialog(object, handle, m)
+    local is_renamed = dialog_manager.show_attribute_dialog(m)
+    if is_renamed then
+        trd_writer.save(object.archive_path, object.files_list, object, true)
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
+
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+    end
+end
+
+--- Compiles and triggers the standalone DirSys folder rename modal, persisting changes back to disk.
+---@param object table The active parent plugin panel context mapping states
+---@param handle userdata Low-level Far Manager panel frame handle context pointer
+---@param folder table Target DirSys folder reference block dict
+---@return nil
+local function show_rename_folder_dialog(object, handle, folder)
+    local new_name = dialog_manager.show_rename_folder_dialog(folder.display_name or "")
+    if not new_name then return end
+
+    -- Recode the freshly entered UTF-8 dialog text straight back into raw TR-DOS CP866 bytes
+    local cp866_name = encoder.utf8_to_cp866(new_name)
+    cp866_name = string.sub(cp866_name, 1, 11)
+    if string.len(cp866_name) < 11 then
+        cp866_name = cp866_name .. string.rep(" ", 11 - string.len(cp866_name))
+    end
+
+    folder.name = cp866_name
+
+    local flush_success = trd_writer.save(object.archive_path, object.files_list, object, false)
+    if flush_success then
+        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
+        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
+        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+    else
+        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
+    end
+end
+
+
 local M = {}
 
 M.Info = {
@@ -828,38 +958,6 @@ function M.MakeDirectory(object, handle, dir_name, op_mode)
     return 1
 end
 
-local trd_writer = require("theX.formats.trd.writer")
-
---- Collects all nested subdirectory IDs under the specified target folder nodes recursively.
----@param folders table[] Cached list array of active DirSys directories mapping properties
----@param initial_delete_ids table<integer, boolean> Lookup hash set containing folder IDs selected for deletion
----@return table<integer, boolean> cascade_delete_ids Complete populated lookup map of all target deleted catalog IDs
-local function collect_cascade_folder_ids(folders, initial_delete_ids)
-    local deleted_map = {}
-    for id, state in pairs(initial_delete_ids) do
-        deleted_map[id] = state
-    end
-
-    local scan_needed = true
-    -- Loop down the tree layout branches layer by layer until no more children are gathered
-    while scan_needed do
-        scan_needed = false
-        for _, folder in ipairs(folders) do
-            local f_id = folder.id
-            local p_id = folder.parent_id or 0
-
-            -- [[ FIXED: Replaced string byte lookup with clean object property evaluation ]]
-            -- If parent folder is already marked for deletion, but child isn't collected yet
-            if deleted_map[p_id] and not deleted_map[f_id] and not folder.deleted then
-                deleted_map[f_id] = true
-                scan_needed = true -- Trigger another deep scan iteration loop sweep
-            end
-        end
-    end
-
-    return deleted_map
-end
-
 --- Native Far Manager VFS callback triggered whenever a user attempts to delete items (F8).
 --- Supports full deep cascading tree deletion for DirSys folders and target sub-assets.
 ---@param object table The active parent plugin panel context mapping states
@@ -996,15 +1094,6 @@ function M.ProcessPanelEvent(object, handle, event, param)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         return true -- Event handled successfully
-    -- elseif event == F.FE_REDRAW then
-    --     local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
-    --     local panel_mode = panel_info.ViewMode
-    --     if panel_mode == 4 then
-    --         panel.UpdatePanel(nil, F.PANEL_ACTIVE, true)
-    --         -- panel.RedrawPanel(nil, F.PANEL_ACTIVE)
-    --         return false
-    --     end
-    --     return false
     end
 
     return false
@@ -1031,66 +1120,6 @@ function M.ClosePanel(object, handle)
     end
 end
 
-
--- [[ Inside theX/formats/trd/init.lua -> Stage 1: Tree Walker Utility ]]
-
---- Recursive helper to gather all active subfolders and files nested inside a specific DirSys parent folder.
----@param object table The active parent plugin panel context mapping states
----@param parent_id integer The unique folder ID node to crawl down from
----@param relative_sub_path string Accumulated folder path trail segment string (e.g. "GAMES\ACTION")
----@param out_payload_queue table Array container to accumulate extraction tasks structures
-local function gather_nested_extraction_tree(object, parent_id, relative_sub_path, out_payload_queue)
-    if object.files_list then
-        for _, hobeta_file in ipairs(object.files_list) do
-            local m = hobeta_file.meta
-            if m and not m.deleted then
-                -- Resolve file parent directory container index position without _trdos_index fields
-                -- We locate the index of the file in the master files_list by sequential verification
-                local file_trdos_idx = nil
-                for f_idx, search_file in ipairs(object.files_list) do
-                    if search_file == hobeta_file then
-                        file_trdos_idx = f_idx - 1
-                        break
-                    end
-                end
-
-                local file_parent_id = 0
-                if file_trdos_idx and object.trd_file_maps and object.trd_file_maps[file_trdos_idx] then
-                    file_parent_id = object.trd_file_maps[file_trdos_idx]
-                end
-
-                if file_parent_id == parent_id then
-                    table.insert(out_payload_queue, {
-                        is_directory  = false,
-                        display_name  = m.display_name,
-                        relative_path = relative_sub_path,
-                        header        = hobeta_file.header or "",
-                        data          = hobeta_file.data or ""
-                    })
-                end
-            end
-        end
-    end
-
-    if object.trd_folders then
-        for _, folder in ipairs(object.trd_folders) do
-            if not folder.deleted and folder.parent_id == parent_id then
-                local folder_display = folder.display_name or "NEW_FOLDER"
-                local appended_sub_path = relative_sub_path == "" and folder_display or (relative_sub_path .. "\\" .. folder_display)
-
-                table.insert(out_payload_queue, {
-                    is_directory  = true,
-                    display_name  = folder_display,
-                    relative_path = relative_sub_path,
-                    header        = "",
-                    data          = ""
-                })
-
-                gather_nested_extraction_tree(object, folder.id, appended_sub_path, out_payload_queue)
-            end
-        end
-    end
-end
 
 --- Native Far Manager VFS callback triggered whenever a user copies files OUT of the plugin panel (F5).
 ---@param object table The active parent plugin panel context mapping states
@@ -1366,11 +1395,6 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 end
 
 
--- [[ Inside theX/formats/trd/init.lua -> Stage 3: Core Import Entry Point ]]
-
-local trd_writer = require("theX.formats.trd.writer")
-local hobeta_loader = require("theX.formats.hobeta.reader") -- Assuming loader is mapped onto hobeta components
-
 --- Native Far Manager VFS callback triggered whenever a user copies files INTO the plugin panel (F5).
 ---@param object table The active parent plugin panel context mapping states
 ---@param handle userdata Low-level Far Manager panel frame handle context pointer
@@ -1411,7 +1435,7 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
 
             -- Run our dynamic tree walker crawler to harvest inner contents under the active navigation level folder ID
             local current_folder_lvl_id = object.current_folder_id or 0
-            harvest_pc_import_tree(object, full_pc_path, current_folder_lvl_id, temp_folders, flat_import_tasks)
+            harvest_pc_import_tree(full_pc_path, current_folder_lvl_id, temp_folders, flat_import_tasks)
         else
             -- User attempts to copy a standalone individual file element row
             local current_folder_lvl_id = object.current_folder_id or 0
@@ -1521,50 +1545,6 @@ function M.PutFiles(object, handle, items_to_move, is_move, src_path, op_flags)
     else
         far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
         return 0
-    end
-end
-
---- Compiles and triggers the standalone TR-DOS file attribute editor modal, persisting changes back to disk.
----@param object table The active parent plugin panel context mapping states
----@param handle userdata Low-level Far Manager panel frame handle context pointer
----@param m table Target file metadata reference block dict
----@return nil
-local function show_rename_file_dialog(object, handle, m)
-    local is_renamed = dialog_manager.show_attribute_dialog(m)
-    if is_renamed then
-        trd_writer.save(object.archive_path, object.files_list, object, true)
-        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
-
-        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
-        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
-    end
-end
-
---- Compiles and triggers the standalone DirSys folder rename modal, persisting changes back to disk.
----@param object table The active parent plugin panel context mapping states
----@param handle userdata Low-level Far Manager panel frame handle context pointer
----@param folder table Target DirSys folder reference block dict
----@return nil
-local function show_rename_folder_dialog(object, handle, folder)
-    local new_name = dialog_manager.show_rename_folder_dialog(folder.display_name or "")
-    if not new_name then return end
-
-    -- Recode the freshly entered UTF-8 dialog text straight back into raw TR-DOS CP866 bytes
-    local cp866_name = encoder.utf8_to_cp866(new_name)
-    cp866_name = string.sub(cp866_name, 1, 11)
-    if string.len(cp866_name) < 11 then
-        cp866_name = cp866_name .. string.rep(" ", 11 - string.len(cp866_name))
-    end
-
-    folder.name = cp866_name
-
-    local flush_success = trd_writer.save(object.archive_path, object.files_list, object, false)
-    if flush_success then
-        vfs_core.refresh_panel_metadata(object.files_list, object.trd_folders)
-        panel.RedrawPanel(handle, F.PANEL_ACTIVE)
-        panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
-    else
-        far.Message(L.m_err_write_failed, L.m_err_title, L.m_btn_cancel, "w")
     end
 end
 
@@ -1789,16 +1769,17 @@ MenuItem {
 
         -- [[ ROUTING INTERNAL SELECTIONS ACTION EXECUTION ]]
         if chosen_pos == 1 and is_trd_active_panel then
-            -- Double check protection to bypass macro injections bounds drops
-            execute_trdos_move_compaction(p_info.PluginObject.object, nil)
-
+            if p_info then
+                execute_trdos_move_compaction(p_info.PluginObject.object)
+            end
         elseif chosen_pos == 2 then
             -- [[ ACTION 2: CREATE A NEW EMPTY TRD DISK IMAGE ]]
             create_empty_trd_disk()
         end
 
         return nil
-    end}
+    end
+}
 
 -- [[ DECLARATIVE LUA_FAR CONFIGURATION REGISTRY LINK ]]
 MenuItem {

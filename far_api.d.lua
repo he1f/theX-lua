@@ -150,10 +150,15 @@ function far.RecursiveSearch(InitDir, Mask, UserFunc, Flags, ...) end
 ---@index integer Global static bitmask flags authority dictionary for Far Manager 3 API.
 local Flags = {
     OPIF_ADDDOTS            = 0x0000000000000008,
+
     PFLAGS_REVERSESORTORDER = 0x0000000000000004,
+    PFLAGS_PLUGIN           = 0x0000000000000800,
+
     FE_CHANGEVIEWMODE       = 0,
+
     PANEL_ACTIVE            = 1,
     PANEL_PASSIVE           = 0,
+
     SM_UNSORTED             = 1,
 
     DI_TEXT                 = 0,
@@ -172,6 +177,7 @@ local Flags = {
     DIF_CENTERGROUP         = 0x0000000000004000,
     DIF_SEPARATOR           = 0x0000000000010000,
     DIF_HISTORY             = 0x0000000000040000,
+    DIF_DISABLE             = 0x0000000080000000,
     DIF_DEFAULTBUTTON       = 0x0000000100000000,
     DIF_FOCUS               = 0x0000000200000000,
 
@@ -213,7 +219,6 @@ local Flags = {
     OPM_QUICKVIEW           = 0x0000000000000040,
     OPM_PGDN                = 0x0000000000000080,
     OPM_COMMANDS            = 0x0000000000000100,
-
 }
 
 -- Assign the local symbol back to global namespace to activate autocomplete chains
@@ -366,6 +371,13 @@ function panel.SetSelection(handle, whatpanel, items, selection) end
 ---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
 ---@return boolean result Returns true if the session lock was safely released and viewports flushed, false on errors
 function panel.EndSelection(handle, whatpanel) end
+
+---@overload fun(handle: nil, whatpanel: 0|1): string
+---Retrieves detailed file attributes metadata and content metrics from the specific panel element row index.
+---@param handle userdata Low-level Far Manager panel core instance frame context pointer handle, or nil
+---@param whatpanel integer? Ignored if explicit handle parameter is passed; otherwise: 1 sets active panel, 0 sets passive panel
+---@return string item Panel Host File; "" for the file panels
+function panel.GetPanelHostFile(handle, whatpanel) end
 
 
 ---@class M

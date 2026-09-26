@@ -275,9 +275,9 @@ end
 ---@param default_filename string Initial suggested target TRD file name
 ---@param dirsys_available boolean Whether the "Install DirSys 1.0" checkbox should be enabled for interaction
 ---@return string|nil target_path Absolute destination directory path, or nil if cancelled
----@return string|nil target_filename Target TRD file name (with extension), or nil if cancelled
----@return string|nil disk_label Raw UTF-8 disk label text entered by the user
----@return boolean|nil install_dirsys True if the user requested a DirSys 1.0 layout to be pre-initialized
+---@return string? target_filename Target TRD file name (with extension)
+---@return string? disk_label Raw UTF-8 disk label text entered by the user
+---@return boolean? install_dirsys True if the user requested a DirSys 1.0 layout to be pre-initialized
 function manager.show_create_trd_dialog(default_path, default_filename, dirsys_available)
     -- Grey out and lock the checkbox entirely whenever the DirSys extension is disabled plugin-wide
     local dirsys_flags = dirsys_available and 0 or F.DIF_DISABLE
