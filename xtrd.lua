@@ -413,6 +413,29 @@ local function has_c0_column(handle)
     return column_types and string.find(column_types, "(%f[%w_])C0(%f[%W_])")
 end
 
+local function get_c0_width(handle)
+    local c0_width = 0
+    local col_types_str = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
+    local col_widths_str = panel.GetColumnWidths(handle, F.PANEL_ACTIVE)
+
+    if col_types_str and col_widths_str then
+        local next_type = string.gmatch(col_types_str, "([^,]+)")
+        local next_width = string.gmatch(col_widths_str, "([^,]+)")
+
+        while true do
+            local col_type = next_type()
+            local col_width = next_width()
+            if not col_type or not col_width then break end
+
+            col_type = string.match(col_type, "^%s*(.-)%s*$") or col_type
+            if col_type == "C0" then
+                c0_width = tonumber(col_width) or 0
+                break
+            end
+        end
+    end
+    return c0_width
+end
 
 local M = {}
 
@@ -679,6 +702,8 @@ function M.GetFindData(object, handle, key_flags)
             end
         end
     end
+
+    object.last_c0_width = c0_width
 
     local far_items = {}
 
@@ -1101,7 +1126,9 @@ function M.ProcessPanelEvent(object, handle, event, param)
         return true -- Event handled successfully
     elseif event == F.FE_REDRAW then
         if has_c0_column(handle) then
-            panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+            if object.last_c0_width ~= get_c0_width(handle) then
+                panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+            end
         end
         return false
     end

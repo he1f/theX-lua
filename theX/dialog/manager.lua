@@ -190,11 +190,7 @@ function manager.show_attribute_dialog(m)
 
     local dialog_result = far.Dialog(dialog_id, -1, -1, 60, 13, nil, dialog_items, 0, rename_dialog_handler)
     if dialog_result == 11 then
-        local scl_should_be_updated = false
-        if m.name ~= current_name or m.type ~= current_type or m.start ~= current_start then
-            scl_should_be_updated = true
-        end
-        if scl_should_be_updated then
+        if m.name ~= current_name or m.type ~= current_type or tostring(m.start) ~= current_start then
             return true
         end
     end
