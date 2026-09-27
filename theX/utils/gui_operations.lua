@@ -9,8 +9,9 @@ local pipeline = require("theX.xLook.decoder_pipeline") -- Dedicated target text
 ---@param dest_path string Temporary destination root directory on the host PC filesystem (e.g. win.GetEnv("TEMP"))
 ---@param is_view boolean Active state bit flag for standard non-modal F3 Viewer requests
 ---@param is_edit boolean Active state bit flag for standard non-modal F4 Editor requests
+---@param is_quickview boolean Active state bit flag for standard QView requests
 ---@return boolean success Returns true if the temporary file was safely generated and UI window successfully spawned
-function gui_operations.process_view_edit(object, item, dest_path, is_view, is_edit)
+function gui_operations.process_view_edit(object, item, dest_path, is_view, is_edit, is_quickview)
     if not object or not item or not item.FileName then return false end
 
     local filename = item.FileName
@@ -54,16 +55,21 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     local target_filename = filename
 
     -- If a decoder returned a clean string text buffer, override extension to ensure syntax highlights triggers
-    if m.group == "asm" then
-        target_filename = base_file_name .. ".a80"
-    elseif m.group == "basic" then
-        target_filename = base_file_name .. ".bas"
+    if is_quickview then
+        target_filename = m.display_name
     else
-        local target_ext = m.ext or m.new_type or m.type or "C"
-        target_filename = base_file_name .. "." .. string.lower(target_ext)
-        if m.description then
-            assembler_label = m.description
+        if m.group == "asm" then
+            target_filename = base_file_name .. ".a80"
+        elseif m.group == "basic" then
+            target_filename = base_file_name .. ".bas"
+        else
+            local target_ext = m.ext or m.new_type or m.type or "C"
+            target_filename = base_file_name .. "." .. string.lower(target_ext)
+            if m.description then
+                assembler_label = m.description
+            end
         end
+
     end
 
     local full_dest_path = win.JoinPath(dest_path, target_filename)
@@ -83,6 +89,10 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
         end
     end
     file_handle:close()
+
+    if is_quickview then
+        return true
+    end
 
     -- [[ STAGE 5: COMPILE CUSTOM NON-MODAL VIEWPORT TITLE LAYOUT DESCRIPTORS ]]
     local custom_title = ""

@@ -234,17 +234,18 @@ end
 
 
 function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
-    local is_view = (op_flags & F.OPM_VIEW) ~= 0
+    local is_quickview = (op_flags & F.OPM_QUICKVIEW) ~= 0
+    local is_view = (op_flags & F.OPM_VIEW) ~= 0 and not is_quickview
     local is_edit = (op_flags & F.OPM_EDIT) ~= 0
 
-    local is_internal_op = is_view or is_edit
+    local is_internal_op = is_view or is_edit or is_quickview
 
     if is_internal_op then
         -- Берём текущий выделенный файл/элемент под курсором для вывода в UI
         local current_item = items_to_move[1]
 
         if current_item then
-            local ui_success = gui.process_view_edit(object, current_item, dest_path, is_view, is_edit)
+            local ui_success = gui.process_view_edit(object, current_item, dest_path, is_view, is_edit, is_quickview)
             return ui_success and 1 or 0
         end
         return 0
