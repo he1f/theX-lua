@@ -2244,6 +2244,16 @@ local rules = {
     },
   },
   {
+    description = "AC Edit text",
+    group = "ac_edit",
+    new_type = "t",
+    show_header = false,
+    special_char = "!",
+    type = "W",
+    start = 0,
+  },
+
+  {
     description = "ZX Word text",
     new_type = "t",
     show_header = false,

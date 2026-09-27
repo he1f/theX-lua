@@ -408,6 +408,11 @@ local function show_rename_folder_dialog(object, handle, folder)
     end
 end
 
+local function has_c0_column(handle)
+    local column_types = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
+    return column_types and string.find(column_types, "(%f[%w_])C0(%f[%W_])")
+end
+
 
 local M = {}
 
@@ -1094,6 +1099,11 @@ function M.ProcessPanelEvent(object, handle, event, param)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         return true -- Event handled successfully
+    elseif event == F.FE_REDRAW then
+        if has_c0_column(handle) then
+            panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+        end
+        return false
     end
 
     return false

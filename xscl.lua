@@ -232,6 +232,11 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
     return true, processed_map
 end
 
+local function has_c0_column(handle)
+    local column_types = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
+    return column_types and string.find(column_types, "(%f[%w_])C0(%f[%W_])")
+end
+
 
 function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     local is_quickview = (op_flags & F.OPM_QUICKVIEW) ~= 0
@@ -339,7 +344,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     return 0
 end
 
-
+local c0_width = 0
 function M.Open(open_from, guid, item)
     local archive_path = nil
 
@@ -395,7 +400,7 @@ function M.GetFindData(object, handle, key_flags)
     end
 
     ---@type integer Current physical character width of column C0
-    local c0_width = 0 -- Use 0 as a marker meaning the width is not determined yet
+    c0_width = 0 -- Use 0 as a marker meaning the width is not determined yet
 
     ---@type string|nil Comma-separated types layout string from LuaFAR
     local col_types_str = panel.GetColumnTypes(handle, F.PANEL_ACTIVE)
@@ -663,8 +668,12 @@ function M.ProcessPanelEvent(object, handle, event, param)
         panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
         panel.RedrawPanel(handle, F.PANEL_ACTIVE)
         return true -- Event handled successfully
+    elseif event == F.FE_REDRAW then
+        if has_c0_column(handle) then
+            panel.UpdatePanel(handle, F.PANEL_ACTIVE, true)
+        end
+        return false
     end
-
     return false
 end
 

@@ -145,6 +145,35 @@ function far.Menu(Properties, Items, BreakKeys) end
 ---@return ...any results All distinct return values evaluated and surfaced by UserFunc if it triggered a loop halt transaction; otherwise nothing
 function far.RecursiveSearch(InitDir, Mask, UserFunc, Flags, ...) end
 
+---@class FarTimerObject
+---A timer object returned by `far.Timer`. Has an API similar to Delphi classes.
+local FarTimerObject = {}
+
+---Destroys the timer and frees up system resources.
+function FarTimerObject:Close() end
+
+---Enables or disables (pauses) the timer.
+---@param state boolean `true` to start/resume, `false` to pause.
+function FarTimerObject:Enabled(state) end
+
+---Gets or dynamically updates the timer interval on the fly.
+---@param ms? integer If provided, sets a new interval in milliseconds.
+---@return integer # The current or newly set interval in milliseconds.
+function FarTimerObject:Interval(ms) end
+
+
+---Creates a periodic Far Manager timer.
+---
+---Every time the specified interval elapses, the `handler` function is called.
+---The first argument passed to the `handler` is always the timer object itself,
+---followed by any additional arguments passed to `far.Timer`.
+---
+---@param interval integer The timer interval in milliseconds.
+---@param handler fun(timer: FarTimerObject, ...: any) The callback function triggered on each tick.
+---@param ... any Additional arguments of any type to be forwarded to the handler.
+---@return FarTimerObject|nil timer The created timer object, or `nil` if creation failed.
+function far.Timer(interval, handler, ...) end
+
 ---@class far.Flags
 ---@extending integer
 ---@index integer Global static bitmask flags authority dictionary for Far Manager 3 API.
@@ -155,6 +184,7 @@ local Flags = {
     PFLAGS_PLUGIN           = 0x0000000000000800,
 
     FE_CHANGEVIEWMODE       = 0,
+    FE_REDRAW               = 1,
 
     PANEL_ACTIVE            = 1,
     PANEL_PASSIVE           = 0,
