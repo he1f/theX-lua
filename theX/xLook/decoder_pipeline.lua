@@ -10,7 +10,8 @@ local asm_decoders_registry = {
     "storm",
     "tasm",
     "tasm2",
-    "basic"
+    "basic",
+    "ac_edit",
 }
 
 --- Universal decoupled pipeline executing search, detection and translation for Z80 text sources.

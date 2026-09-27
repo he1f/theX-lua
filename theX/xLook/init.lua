@@ -3,7 +3,6 @@ xlook_plugin = {}
 local hobeta_reader = require("theX.formats.hobeta.reader")
 local detector = require("theX.utils.detector")
 local asm_pipeline = require("theX.xLook.decoder_pipeline")
-local basic_decoder = require("theX.xLook.basic")
 local L = require("theX.ui.localization")
 
 local F = far.Flags
@@ -43,10 +42,10 @@ function xlook_plugin.process_and_edit_file(file_path)
     detector.enrich_file_meta(target_file) -- Evaluates m.group, m.new_type, m.show_header
 
     -- Evaluate bounds: item must belong to the asm group OR have show_header = false explicitly mapped
-    local is_asm_or_basic_group = (m.group == "asm" or m.group == "basic")
+    local is_to_be_decoded = (m.group == "asm" or m.group == "basic" or m.group == "ac_edit")
     local is_raw_stream = (m.show_header == false)
 
-    if not (is_asm_or_basic_group or is_raw_stream) then
+    if not (is_to_be_decoded or is_raw_stream) then
         far.Message(L.xl_err_not_supported, L.xl_err_title, L.m_btn_cancel, "w")
         return false
     end
@@ -58,7 +57,7 @@ function xlook_plugin.process_and_edit_file(file_path)
         type_label = m.description
     end
 
-    if is_asm_or_basic_group then
+    if is_to_be_decoded then
         -- Execute clean DRY call passing pure body string bytes (sectors payload without any headers)
         local decoded_txt, asm_name = asm_pipeline.decode_text_stream(raw_data, m)
         if decoded_txt then
