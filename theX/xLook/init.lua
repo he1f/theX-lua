@@ -42,7 +42,7 @@ function xlook_plugin.process_and_edit_file(file_path)
     detector.enrich_file_meta(target_file) -- Evaluates m.group, m.new_type, m.show_header
 
     -- Evaluate bounds: item must belong to the asm group OR have show_header = false explicitly mapped
-    local is_to_be_decoded = (m.group == "asm" or m.group == "basic" or m.group == "ac_edit")
+    local is_to_be_decoded = (m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "pt3")
     local is_raw_stream = (m.show_header == false)
 
     if not (is_to_be_decoded or is_raw_stream) then
@@ -81,6 +81,8 @@ function xlook_plugin.process_and_edit_file(file_path)
         target_ext = ".a80"
     elseif m.group == "basic" then
         target_ext = ".bas"
+    elseif m.group == "pt3" then
+        target_ext = ".txt"
     else
         target_ext = m.ext or m.new_type or m.type or "C"
     end
