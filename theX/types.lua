@@ -1158,10 +1158,37 @@ local rules = {
     type = "L",
   },
   {
-    description = "Sound Tracker module",
+    description = "Sound Tracker module (STC)",
     new_type = "m",
     special_char = "!",
     start = 25000,
+    type = "S",
+    signatures = {
+      {
+        offset = 7,
+        pattern = "SONG BY ST COMPILE",
+      },
+      {
+        offset = 7,
+        pattern = "SONG BY MB COMPILE",
+      },
+      {
+        offset = 7,
+        pattern = "SOUND TRACKER v1.3",
+      },
+      {
+        offset = 7,
+        pattern = " COMPILED BY IMP !",
+      },
+
+    }
+  },
+  {
+    description = "Sound Tracker module (ST1)",
+    new_type = "m",
+    special_char = "!",
+    start = 25000,
+    size = 3585,
     type = "S",
   },
   {

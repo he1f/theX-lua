@@ -24,26 +24,39 @@ local function match_signature(binary_data, sig)
     if not pattern then return false end
 
     local pattern_length = 0
-    for k, _ in pairs(pattern) do
-        if type(k) == "number" and k > pattern_length then
-            pattern_length = k
+    if type(pattern) == "string" then
+        pattern_length = string.len(pattern)
+    else
+        for k, _ in pairs(pattern) do
+            if type(k) == "number" and k > pattern_length then
+                pattern_length = k
+            end
         end
     end
 
     for idx = 1, pattern_length do
-        local char_or_byte = pattern[idx]
-        if char_or_byte ~= nil then
+        local pattern_byte
+        if type(pattern) == "string" then
+            pattern_byte = string.byte(pattern, idx)
+        else
+            local char_or_byte = pattern[idx]
+            if char_or_byte ~= nil then
+                pattern_byte = type(char_or_byte) == "string" and string.byte(char_or_byte) or char_or_byte
+            end
+        end
+
+        if pattern_byte ~= nil then
             local pos = base_offset + idx
             if pos > string.len(binary_data) then return false end
 
             local file_byte = string.byte(binary_data, pos)
-            local pattern_byte = type(char_or_byte) == "string" and string.byte(char_or_byte) or char_or_byte
 
             if file_byte ~= pattern_byte then return false end
         end
     end
     return true
 end
+
 
 ---@param binary_data string The raw binary payload of the file
 ---@param rule table The active rule container dictionary
