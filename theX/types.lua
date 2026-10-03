@@ -1188,7 +1188,7 @@ local rules = {
     new_type = "m",
     special_char = "!",
     start = 25000,
-    size = 3585,
+    size = 7617,
     type = "S",
   },
   {

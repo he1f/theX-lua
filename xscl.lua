@@ -135,22 +135,11 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
         local output_scl_name = win.JoinPath(final_dest_path, first_file_name .. extension)
 
         local prepared_scl_list = {}
+        local prepared_raw_list = {}
         for _, hobeta_file in ipairs(files_to_export) do
             if skip_headers then
                 local clean_data = string.sub(hobeta_file.data, 1, hobeta_file.meta.size)
-                local new_sectors = math.ceil(hobeta_file.meta.size / SECTOR_SIZE)
-                local aligned_size = new_sectors * SECTOR_SIZE
-
-                if string.len(clean_data) < aligned_size then
-                    clean_data = clean_data .. string.rep(string.char(0), aligned_size - string.len(clean_data))
-                end
-
-                local raw_desc = string.sub(hobeta_file.header, 1, 13) .. string.char(new_sectors)
-                local raw_15_bytes = raw_desc .. string.char(0)
-                local crc_bytes = hobeta_reader.calculate_crc(raw_15_bytes)
-                local new_header = raw_15_bytes .. crc_bytes .. string.char(new_sectors)
-
-                table.insert(prepared_scl_list, { header = new_header, data = clean_data, meta = hobeta_file.meta })
+                table.insert(prepared_raw_list, clean_data)
             else
                 table.insert(prepared_scl_list, hobeta_file)
             end
@@ -163,7 +152,16 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
 
         if allowed then
             -- If the dialog was confirmed, write the real structure over it with the writer
-            scl_writer.save(output_scl_name, prepared_scl_list, object)
+            if skip_headers then
+                local combined_data = table.concat(prepared_raw_list)
+                local file_handle = io.open(output_scl_name, "wb")
+                if not file_handle then return false, processed_map end
+                file_handle:write(combined_data)
+                file_handle:close()
+            else
+                scl_writer.save(output_scl_name, prepared_scl_list, object)
+            end
+
             -- Mark ALL files in this group as successfully processed
             for _, hobeta_file in ipairs(files_to_export) do
                 processed_map[hobeta_file.meta.display_name] = true
@@ -183,7 +181,8 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
 
             local current_filename = hobeta_file.meta.display_name
             if skip_headers then
-                current_filename = hobeta_file.meta.name .. "." .. hobeta_file.meta.type
+                local name_without_ext = string.match(current_filename, "(.+)%.[^%.]+$") or current_filename
+                current_filename = name_without_ext .. ".bin"
             end
 
             local full_output_path = win.JoinPath(final_dest_path, current_filename)

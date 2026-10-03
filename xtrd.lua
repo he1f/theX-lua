@@ -1287,7 +1287,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 
             if skip_headers then
                 -- Synthesize a pristine, headerless continuous binary stream cutting trailing sector padding
-                target_output_filename = base_archive_name .. ".bin"
+                target_output_filename = base_archive_name .. ".raw"
                 local raw_chunks = {}
                 for _, h_file in ipairs(files_to_pack) do
                     if h_file.meta and h_file.data then
@@ -1366,7 +1366,8 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
                                 display_name  = hobeta_file.meta.display_name,
                                 relative_path = "",
                                 header        = hobeta_file.header or "",
-                                data          = hobeta_file.data or ""
+                                data          = hobeta_file.data or "",
+                                size          = hobeta_file.meta.size
                             })
                             processed_root_elements[filename] = true
                             break
@@ -1390,10 +1391,16 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
                 target_full_path = target_full_path .. task.display_name
                 io_manager.create_directories(target_full_path)
             else
-                target_full_path = target_full_path .. task.display_name
+                local current_filename = task.display_name
+
+                if skip_headers then
+                    local name_without_ext = string.match(current_filename, "(.+)%.[^%.]+$") or current_filename
+                    current_filename = name_without_ext .. ".bin"
+                end
+                target_full_path = target_full_path .. current_filename
 
                 -- Conditional payload extraction layout depending on skip_headers state flag selection
-                local payload_stream = skip_headers and task.data or (task.header .. task.data)
+                local payload_stream = skip_headers and string.sub(task.data, 1, task.size) or (task.header .. task.data)
 
                 local write_ok, updated_state, was_skipped = io_manager.safe_write_file(
                     target_full_path, payload_stream, conflict_state, false
