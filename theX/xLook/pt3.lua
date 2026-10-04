@@ -255,16 +255,17 @@ end
 --- Parses all patterns referenced by the song order list.
 ---@param data string Whole file contents
 ---@return table[]|nil patterns Sequential list of {A=rows, B=rows, C=rows} patterns, or nil on error
+---@return table[]|nil order Play order
 ---@return string|nil error_msg Present only when patterns is nil
 local function parse_pt3(data)
   local size = #data
   if size < MIN_FILE_SIZE then
-    return nil, "File too small"
+    return nil, nil, "File too small"
   end
 
   local psa_chn = read_u16(data, OFF_PATTERN_TABLE_PTR)
   if psa_chn >= size then
-    return nil, string.format("Psa_chn=%d out of file", psa_chn)
+    return nil, nil, string.format("Psa_chn=%d out of file", psa_chn)
   end
 
   local order = {}
@@ -278,7 +279,7 @@ local function parse_pt3(data)
   end
 
   if #order == 0 then
-    return {}
+    return {}, {}
   end
 
   local max_order = order[1]
@@ -301,7 +302,7 @@ local function parse_pt3(data)
       C = off_c < size and parse_track(data, off_c) or {},
     }
   end
-  return patterns
+  return patterns, order
 end
 
 --- Builds a zip_longest-style row list from three channel track arrays, capped at max_rows.
@@ -362,6 +363,35 @@ function Pt3:detect()
   return true, "ProTracker 3." .. string.char(digit_byte)
 end
 
+local function format_hex_matrix(tbl, max_line_width)
+    local lines = {}
+    local current_line = {}
+    local current_length = 0
+
+    for _, num in ipairs(tbl) do
+        local hex_item = string.format("%02X", num)
+
+        local added_length = #current_line > 0 and (#hex_item + 2) or #hex_item
+
+        if current_length + added_length > max_line_width then
+            if #current_line > 0 then
+                table.insert(lines, table.concat(current_line, ", "))
+            end
+            current_line = { hex_item }
+            current_length = #hex_item
+        else
+            table.insert(current_line, hex_item)
+            current_length = current_length + added_length
+        end
+    end
+
+    if #current_line > 0 then
+        table.insert(lines, table.concat(current_line, ", "))
+    end
+
+    return table.concat(lines, "\n")
+end
+
 --- Renders the song header plus every referenced pattern as a plain-text report.
 ---@return string text Formatted pattern dump, ready to write straight into the temp editor file
 function Pt3:get_text()
@@ -377,11 +407,15 @@ function Pt3:get_text()
   local freq_idx = string.byte(body, OFF_FREQ_TABLE + 1) or 0
   out[#out + 1] = string.format("Frequency table: %s\n", FREQ_TABLES[freq_idx] or "Unknown")
 
-  local patterns, parse_err = parse_pt3(body)
+  local patterns, order, parse_err = parse_pt3(body)
   if not patterns then
     out[#out + 1] = string.format("\n[Pattern parsing failed: %s]\n", parse_err or "unknown error")
     return table.concat(out)
   end
+
+  out[#out + 1] = "\nOrder:\n"
+  out[#out + 1] = format_hex_matrix(order, 48)
+  out[#out + 1] = "\n"
 
   for idx, pat in ipairs(patterns) do
     local pattern_no = idx - 1
@@ -398,15 +432,21 @@ function Pt3:get_text()
 
     if #rows > 0 then
       out[#out + 1] = string.format("\nPattern %02X\n", pattern_no)
-      out[#out + 1] = "Row | Channel A | Channel B | Channel C\n"
-      out[#out + 1] = "----+-----------+-----------+-----------\n"
+      out[#out + 1] = "+----+-----------+-----------+-----------+\n"
+      out[#out + 1] = "|Row | Channel A | Channel B | Channel C |\n"
+      out[#out + 1] = "+----+-----------+-----------+-----------+\n"
       for r = 1, #rows do
+        local row_marker = " "
+        if r % 4 == 1 then
+          row_marker = ">"
+        end
         local cells = rows[r]
         local a_str = cells[1] and format_row(cells[1]) or "---"
         local b_str = cells[2] and format_row(cells[2]) or "---"
         local c_str = cells[3] and format_row(cells[3]) or "---"
-        out[#out + 1] = string.format("%3d | %-9s | %-9s | %-9s\n", r - 1, a_str, b_str, c_str)
+        out[#out + 1] = string.format("|%s%2d | %-9s | %-9s | %-9s |\n", row_marker, r - 1, a_str, b_str, c_str)
       end
+      out[#out + 1] = "+----+-----------+-----------+-----------+\n"
     end
   end
 
