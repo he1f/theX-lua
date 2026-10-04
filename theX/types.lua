@@ -1020,7 +1020,7 @@ local rules = {
 -- ProTracker 3.x module
     description = "ProTracker {ver} module",
     description_vars = { ver = { offset = 11, type = "ascii", length=3 } },
-    group = "pt3",
+    group = "trackers",
     comment = {
       -- length = 69,
       length = 32,
@@ -1159,6 +1159,7 @@ local rules = {
   },
   {
     description = "Sound Tracker module (STC)",
+    group = "trackers",
     new_type = "m",
     special_char = "!",
     start = 25000,
@@ -1185,6 +1186,7 @@ local rules = {
   },
   {
     description = "Sound Tracker module (ST1)",
+    group = "trackers",
     new_type = "m",
     special_char = "!",
     start = 25000,

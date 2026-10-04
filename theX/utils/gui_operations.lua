@@ -46,7 +46,7 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     -- [[ STAGE 2: RUN INTERACTIVE COMPILER TEXT DECODING PIPELINES ]]
     local text_payload = nil
     local assembler_label = nil
-    if m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "pt3" or m.show_header == false then
+    if m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "trackers" or m.show_header == false then
         text_payload, assembler_label = pipeline.decode_text_stream(raw_data, m)
     end
 
@@ -62,7 +62,7 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
             target_filename = base_file_name .. ".a80"
         elseif m.group == "basic" then
             target_filename = base_file_name .. ".bas"
-        elseif m.group == "pt3" then
+        elseif m.group == "trackers" then
             target_filename = base_file_name .. ".txt"
 
         else
