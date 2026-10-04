@@ -37,7 +37,11 @@ local function match_signature(binary_data, sig)
     for idx = 1, pattern_length do
         local pattern_byte
         if type(pattern) == "string" then
-            pattern_byte = string.byte(pattern, idx)
+            local byte_code = string.byte(pattern, idx)
+            -- ? in the string works the same as nil in binary pattern
+            if byte_code ~= string.byte("?") then
+                pattern_byte = byte_code
+            end
         else
             local char_or_byte = pattern[idx]
             if char_or_byte ~= nil then
