@@ -1064,14 +1064,8 @@ local rules = {
     type = "S",
   },
   {
-    description = "Sound Tracker Pro 48k module",
-    new_type = "m",
-    special_char = "!",
-    start = 25000,
-    type = "f",
-  },
-  {
     description = "Sound Tracker Pro compiled module",
+    group = "trackers",
     comment = {
       length = 26,
       offset = 44,
@@ -1081,24 +1075,45 @@ local rules = {
       {
         offset = 0,
         pattern = {
-          33,
+          0x21, -- LD HL, NN
           nil,
           nil,
-          195,
+          0xC3, -- JP
           nil,
           nil,
-          195,
+          0xC3,
           nil,
           nil,
-          237,
+          0xED, -- LD BC, (mem)
+          0x4B,
           nil,
           nil,
-          nil,
-          195,
+          0xC3, -- JP
         },
       },
     },
     special_char = "!",
+  },
+  {
+    description = "Sound Tracker Pro module",
+    new_type = "m",
+    special_char = "!",
+    start = 0,
+    type = "F",
+  },
+  {
+    description = "Sound Tracker Pro module",
+    new_type = "m",
+    special_char = "!",
+    start = 25000, -- after depacker
+    type = "F",
+  },
+  {
+    description = "Sound Tracker Pro 48K module",
+    new_type = "m",
+    special_char = "!",
+    start = 25000,
+    type = "f",
   },
   {
     description = "ST Pro module (version)",
@@ -1240,7 +1255,9 @@ local rules = {
     special_char = "!",
   },
   {
-    description = "Fast tracker 1.0 module",
+    description = "Fast Tracker v{ver} module",
+    description_vars = { ver = { offset = 65, type = "ascii", length = 4 } },
+    group = "trackers",
     comment = {
       length = 43,
       offset = 7,
@@ -1255,7 +1272,7 @@ local rules = {
     special_char = "!",
   },
   {
-    description = "FastTracker v1.00 module",
+    description = "Fast Tracker v1.00 module",
     new_type = "m",
     signatures = {
       {

@@ -1,6 +1,8 @@
 local St1 = {}
 St1.__index = St1
 
+local text_util = require("theX.xLook.text_util")
+
 local NOTES = { "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-" }
 local MAX_ROWS = 64
 local ORDER_LINE_WIDTH = 48
@@ -67,47 +69,6 @@ local function effective_body(body, header_length)
     return string.sub(body, 1, header_length)
   end
   return body
-end
-
---- Wraps a list of strings with ", " separators up to max_length per line.
----@param items string[]
----@param max_length integer
----@return string
-local function join_wrapped(items, max_length)
-  local lines = {}
-  local current = {}
-  local current_len = 0
-
-  for _, s in ipairs(items) do
-    local added = (#current > 0) and (#s + 2) or #s
-    if current_len + added <= max_length then
-      current[#current + 1] = s
-      current_len = current_len + added
-    else
-      if #current > 0 then
-        lines[#lines + 1] = table.concat(current, ", ")
-      end
-      current = { s }
-      current_len = #s
-    end
-  end
-
-  if #current > 0 then
-    lines[#lines + 1] = table.concat(current, ", ")
-  end
-  return table.concat(lines, "\n")
-end
-
---- Formats one order entry: "01" or "01 (+3)" / "01 (-2)".
----@param pattern integer
----@param transposition integer
----@return string
-local function format_order_item(pattern, transposition)
-  if transposition == 0 then
-    return string.format("%02d", pattern)
-  end
-  local sign = transposition > 0 and "+" or ""
-  return string.format("%02d (%s%d)", pattern, sign, transposition)
 end
 
 --- Formats a decoded ST1 channel cell as "NOTE Ixxx".
@@ -304,9 +265,9 @@ function St1:get_text()
   out[#out + 1] = "Order:\n"
   local order_items = {}
   for _, entry in ipairs(positions) do
-    order_items[#order_items + 1] = format_order_item(entry.pattern, entry.transposition)
+    order_items[#order_items + 1] = text_util.format_order_item(entry.pattern, entry.transposition)
   end
-  out[#out + 1] = join_wrapped(order_items, ORDER_LINE_WIDTH)
+  out[#out + 1] = text_util.join_wrapped(order_items, ORDER_LINE_WIDTH)
   out[#out + 1] = "\n"
 
   -- Pattern storage is 0-based; on-disk / order numbers are 1-based (Pattern 01 = index 0).
