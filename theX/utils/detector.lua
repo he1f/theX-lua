@@ -3,6 +3,11 @@ local detector = {}
 -- [[ Import the Knowledge Base from definitions module ]]
 local rules = require("theX.types")
 
+-- TR-DOS logical sector size (bytes). scan_sectors on a rule is measured in these.
+local SECTOR_SIZE = 256
+-- Default scan window when rule.scan_sectors is set / sig.scan is true but no count given.
+local DEFAULT_SCAN_SECTORS = 4
+
 ---@param str string|nil The raw source string extracted from binary data
 ---@return string The sanitized clean string without trailing garbage
 local function clean_extracted_string(str)
@@ -17,9 +22,9 @@ end
 
 ---@param binary_data string The raw binary payload of the file
 ---@param sig table The single signature validation rule
----@return boolean is_matching True if the binary bytes match the signature pattern
-local function match_signature(binary_data, sig)
-    local base_offset = sig.offset or 0
+---@param base_offset integer 0-based start offset to test
+---@return boolean is_matching True if the binary bytes match the signature pattern at base_offset
+local function match_signature_at(binary_data, sig, base_offset)
     local pattern = sig.pattern
     if not pattern then return false end
 
@@ -34,6 +39,7 @@ local function match_signature(binary_data, sig)
         end
     end
 
+    local data_len = string.len(binary_data)
     for idx = 1, pattern_length do
         local pattern_byte
         if type(pattern) == "string" then
@@ -51,7 +57,7 @@ local function match_signature(binary_data, sig)
 
         if pattern_byte ~= nil then
             local pos = base_offset + idx
-            if pos > string.len(binary_data) then return false end
+            if pos > data_len then return false end
 
             local file_byte = string.byte(binary_data, pos)
 
@@ -59,6 +65,126 @@ local function match_signature(binary_data, sig)
         end
     end
     return true
+end
+
+--- Max byte length of the scan window for a rule/signature.
+---@param rule table|nil
+---@param sig table|nil
+---@param data_len integer
+---@return integer window_len
+local function scan_window_len(rule, sig, data_len)
+    local sectors = nil
+    if sig and sig.scan_sectors ~= nil then
+        sectors = tonumber(sig.scan_sectors)
+    elseif rule and rule.scan_sectors ~= nil then
+        sectors = tonumber(rule.scan_sectors)
+    elseif sig and sig.scan then
+        sectors = DEFAULT_SCAN_SECTORS
+    end
+    if not sectors or sectors <= 0 then
+        return data_len
+    end
+    local win = math.floor(sectors) * SECTOR_SIZE
+    if win > data_len then
+        return data_len
+    end
+    return win
+end
+
+--- Matches a signature at a fixed offset, or by scanning the first N sectors.
+---@param binary_data string
+---@param sig table {offset?=int, pattern=string|table, scan?=bool, scan_sectors?=int}
+---@param rule table|nil parent rule (may define scan_sectors)
+---@return integer|nil matched_offset 0-based offset of the match, or nil
+local function match_signature(binary_data, sig, rule)
+    if not sig or not sig.pattern then return nil end
+
+    local data_len = string.len(binary_data)
+    local want_scan = sig.scan or (sig.offset == nil)
+
+    -- Fixed offset (default when offset is set and scan is not requested)
+    if sig.offset ~= nil and not sig.scan then
+        local off = tonumber(sig.offset) or 0
+        if match_signature_at(binary_data, sig, off) then
+            return off
+        end
+        return nil
+    end
+
+    if not want_scan then
+        return nil
+    end
+
+    local window = scan_window_len(rule, sig, data_len)
+
+    -- Scan mode: search for a string pattern inside the first N sectors.
+    if type(sig.pattern) == "string" then
+        local haystack = binary_data
+        if window < data_len then
+            haystack = string.sub(binary_data, 1, window)
+        end
+        local pos = string.find(haystack, sig.pattern, 1, true)
+        if pos then
+            return pos - 1 -- 0-based
+        end
+        return nil
+    end
+
+    -- Scan mode for byte-table patterns: slide across the window only.
+    local pat_len = 0
+    for k, _ in pairs(sig.pattern) do
+        if type(k) == "number" and k > pat_len then
+            pat_len = k
+        end
+    end
+    if pat_len <= 0 or pat_len > window then
+        return nil
+    end
+    for off = 0, window - pat_len do
+        if match_signature_at(binary_data, sig, off) then
+            return off
+        end
+    end
+    return nil
+end
+
+--- Resolves an absolute 0-based field offset.
+--- Supports:
+---   field.offset              — absolute
+---   field.offset_from_sig     — relative to matched signature (±)
+---   field.offset + offset_from_sig together: absolute base is ignored if offset_from_sig is set
+---@param field table|nil
+---@param sig_offset integer|nil 0-based matched signature offset
+---@return integer|nil abs_offset
+---@return integer|nil length
+local function resolve_field_span(field, sig_offset)
+    if not field then return nil, nil end
+    local length = tonumber(field.length) or 0
+    if length <= 0 then return nil, nil end
+
+    local from_sig = field.offset_from_sig
+    if from_sig ~= nil then
+        if sig_offset == nil then return nil, nil end
+        local rel = tonumber(from_sig) or 0
+        return sig_offset + rel, length
+    end
+
+    if field.offset ~= nil then
+        return tonumber(field.offset) or 0, length
+    end
+
+    return nil, nil
+end
+
+--- Reads a cleaned ASCII span from binary data.
+---@param binary_data string
+---@param abs_offset integer 0-based
+---@param length integer
+---@return string|nil
+local function read_ascii_span(binary_data, abs_offset, length)
+    if abs_offset < 0 then return nil end
+    if abs_offset + length > string.len(binary_data) then return nil end
+    return clean_extracted_string(string.sub(binary_data, abs_offset + 1, abs_offset + length))
 end
 
 
@@ -120,16 +246,19 @@ function detector.enrich_file_meta(hobeta_file)
         if is_match and rule.start and tonumber(rule.start) ~= start_addr then is_match = false end
         if is_match and rule.start_lt and start_addr >= tonumber(rule.start_lt) then is_match = false end
 
-        -- Signature analysis of the binary body
+        -- Signature analysis of the binary body; remember matched 0-based offset
+        local matched_sig_offset = nil
         if is_match and rule.signatures then
-            local sig_ok = false
             for _, sig in ipairs(rule.signatures) do
-                if match_signature(binary_data, sig) then
-                    sig_ok = true
+                local off = match_signature(binary_data, sig, rule)
+                if off ~= nil then
+                    matched_sig_offset = off
                     break
                 end
             end
-            if not sig_ok then is_match = false end
+            if matched_sig_offset == nil then
+                is_match = false
+            end
         end
 
         -- If all criteria matched, enrich the metadata
@@ -140,20 +269,17 @@ function detector.enrich_file_meta(hobeta_file)
 
             if rule.group then meta.group = rule.group end
 
-            if rule.comment and rule.comment.offset and rule.comment.length then
-                local c_off = tonumber(rule.comment.offset) or 0
-                local c_len = tonumber(rule.comment.length) or 0
-                if c_off + c_len <= string.len(binary_data) then
-                    meta.comment = clean_extracted_string(string.sub(binary_data, c_off + 1, c_off + c_len))
-                end
+            -- comment / author: absolute offset OR offset_from_sig (± relative to matched signature)
+            local c_off, c_len = resolve_field_span(rule.comment, matched_sig_offset)
+            if c_off and c_len then
+                local text = read_ascii_span(binary_data, c_off, c_len)
+                if text then meta.comment = text end
             end
 
-            if rule.author and rule.author.offset and rule.author.length then
-                local a_off = tonumber(rule.author.offset) or 0
-                local a_len = tonumber(rule.author.length) or 0
-                if a_off + a_len <= string.len(binary_data) then
-                    meta.author = clean_extracted_string(string.sub(binary_data, a_off + 1, a_off + a_len))
-                end
+            local a_off, a_len = resolve_field_span(rule.author, matched_sig_offset)
+            if a_off and a_len then
+                local text = read_ascii_span(binary_data, a_off, a_len)
+                if text then meta.author = text end
             end
 
             if rule.special_char then meta.special_char = rule.special_char end

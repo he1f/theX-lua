@@ -500,36 +500,37 @@ local rules = {
     },
     special_char = "!",
   },
+  -- ASC Sound Master 1.13+ (no player). ID is scanned in the first N TR-DOS sectors;
+  -- title/author are relative to the matched signature start (± offset_from_sig).
   {
-    description = "ASM 1.12 module",
-    comment = {
-      length = 45,
-      offset = 38,
-    },
+    description = "ASM 1.13+ module",
+    group = "trackers",
     new_type = "m",
-    signatures = {
-      {
-        offset = 83,
-        pattern = {
-          205,
-          82,
-          0,
-          nil,
-          nil,
-          nil,
-          nil,
-          113,
-          198,
-        },
-      },
-    },
     special_char = "!",
+    scan_sectors = 1, -- search only the first 256 bytes for the ID
+    signatures = {
+      { pattern = "ASM 1.13+ COMPILER:", scan = true },
+    },
+    -- prefix(19) + title(20) + " BY "(4) + author(20)
+    comment = {
+      length = 20,
+      offset_from_sig = 19, -- right after the 19-byte ID prefix
+    },
+    author = {
+      length = 20,
+      offset_from_sig = 43, -- 19 + 20 + 4
+    },
   },
   {
-    description = "ASM 1.12 module (2)",
+    description = "ASM 1.12 module",
+    group = "trackers",
     comment = {
-      length = 45,
-      offset = 38,
+      length = 20,
+      offset = 39,
+    },
+    author = {
+      length = 20,
+      offset = 63,
     },
     new_type = "m",
     signatures = {
@@ -547,6 +548,21 @@ local rules = {
           4,
         },
       },
+      {
+        offset = 83,
+        pattern = {
+          205,
+          82,
+          0,
+          nil,
+          nil,
+          nil,
+          nil,
+          113,
+          198,
+        },
+      },
+
     },
     special_char = "!",
   },
@@ -572,17 +588,6 @@ local rules = {
           198,
         },
       },
-    },
-    special_char = "!",
-  },
-  {
-    description = "ASM 1.11 module (2)",
-    comment = {
-      length = 45,
-      offset = 38,
-    },
-    new_type = "m",
-    signatures = {
       {
         offset = 83,
         pattern = {
@@ -698,9 +703,14 @@ local rules = {
   },
   {
     description = "ASM 0.12 module",
+    group = "trackers",
     comment = {
-      length = 45,
-      offset = 38,
+      length = 20,
+      offset = 39,
+    },
+    author = {
+      length = 20,
+      offset = 63,
     },
     new_type = "m",
     signatures = {

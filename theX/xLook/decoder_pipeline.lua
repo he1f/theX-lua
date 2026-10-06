@@ -17,6 +17,7 @@ local asm_decoders_registry = {
     "stc",
     "stp",
     "ft",
+    "asc",
 }
 
 --- Universal decoupled pipeline executing search, detection and translation for Z80 text sources.
