@@ -34,7 +34,7 @@ local function rename_dialog_handler(h_dlg, msg, param1, param2)
                 local t_char = string.sub(clean_ext, 1, 1)
                 local b2 = string.byte(clean_ext, 2)
                 local b3 = string.byte(clean_ext, 3)
-                local start_val = (b2 * 256) + b3
+                local start_val = b2 + (256 * b3)
 
                 is_updating = true
                 far.SendDlgMessage(h_dlg, F.DM_SETTEXT, ID_TYPE, t_char)

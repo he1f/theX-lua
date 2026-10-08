@@ -17,6 +17,7 @@ local asm_decoders_registry = {
     "stc",
     "stp",
     "ft",
+    "psc",
     "asc",
 }
 

@@ -189,7 +189,12 @@ local function execute_export_logic(object, items_to_move, is_move, final_dest_p
 
             local data_to_write = ""
             if skip_headers then
-                data_to_write = string.sub(hobeta_file.data, 1, hobeta_file.meta.size)
+                if hobeta_file.meta.size ~= 0 then
+                    data_to_write = string.sub(hobeta_file.data, 1, hobeta_file.meta.size)
+                else
+                    data_to_write = hobeta_file.data
+                end
+
             else
                 data_to_write = hobeta_file.header .. hobeta_file.data
             end

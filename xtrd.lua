@@ -1361,13 +1361,17 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
                 if object.files_list then
                     for _, hobeta_file in ipairs(object.files_list) do
                         if hobeta_file.meta and hobeta_file.meta.display_name == filename and not hobeta_file.meta.deleted then
+                            local size = hobeta_file.meta.size
+                            if skip_headers then
+                                size = (size and size > 0) and size or #hobeta_file.data
+                            end
                             table.insert(extraction_queue, {
                                 is_directory  = false,
                                 display_name  = hobeta_file.meta.display_name,
                                 relative_path = "",
                                 header        = hobeta_file.header or "",
                                 data          = hobeta_file.data or "",
-                                size          = hobeta_file.meta.size
+                                size          = size,
                             })
                             processed_root_elements[filename] = true
                             break
@@ -1401,7 +1405,6 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 
                 -- Conditional payload extraction layout depending on skip_headers state flag selection
                 local payload_stream = skip_headers and string.sub(task.data, 1, task.size) or (task.header .. task.data)
-
                 local write_ok, updated_state, was_skipped = io_manager.safe_write_file(
                     target_full_path, payload_stream, conflict_state, false
                 )
