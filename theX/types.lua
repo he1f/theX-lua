@@ -1348,6 +1348,7 @@ local rules = {
   },
   {
     description = "Global Tracker module wo/player",
+    group = "trackers",
     comment = {
       length = 32,
       offset = 7,
