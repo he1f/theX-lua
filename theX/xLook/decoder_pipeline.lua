@@ -19,6 +19,7 @@ local asm_decoders_registry = {
     "ft",
     "psc",
     "gt",
+    "sqt",
     "asc",
 }
 

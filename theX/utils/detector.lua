@@ -213,6 +213,110 @@ local function parse_description_vars(binary_data, rule)
 end
 
 ---@param hobeta_file table The core file dictionary mapping metadata and content buffers
+
+--- Checks if the delta (load address - file offset) is valid.
+---@param binary_data string
+---@param checks table Header check table with _offsets
+---@return boolean
+local function check_delta_valid(binary_data, checks)
+    if not checks then return true end
+    local data_len = string.len(binary_data)
+    local offsets = checks._offsets or {}
+    
+    local function read_u16(name)
+        local off = offsets[name]
+        if not off then return nil end
+        if off + 2 > data_len then return nil end
+        local lo = string.byte(binary_data, off + 1) or 0
+        local hi = string.byte(binary_data, off + 2) or 0
+        return lo + hi * 256
+    end
+    
+    local samples_off = read_u16("SamplesOffset")
+    local size = read_u16("Size")
+    
+    if not samples_off or not size then return false end
+    
+    -- Calculate delta
+    local delta = samples_off - 10
+    
+    -- Check if delta is reasonable (0 to 0x8000)
+    if delta < 0 or delta > 0x8000 then return false end
+    
+    -- Check if samples_off - delta is within file
+    local samples_file_off = samples_off - delta
+    if samples_file_off < 0 or samples_file_off >= data_len then return false end
+    
+    -- Check if positions_off - delta is within file
+    local positions_off = read_u16("PositionsOffset")
+    if positions_off then
+        local positions_file_off = positions_off - delta
+        if positions_file_off < 0 or positions_file_off >= data_len then return false end
+    end
+    
+    -- Check if patterns_off - delta is within file
+    local patterns_off = read_u16("PatternsOffset")
+    if patterns_off then
+        local patterns_file_off = patterns_off - delta
+        if patterns_file_off < 0 or patterns_file_off >= data_len then return false end
+    end
+    
+    return true
+end
+
+--- Validates numeric header fields with named fields and constraints.
+---@param binary_data string
+---@param checks table Key-value map: field_name -> {min=, max=, lt=, le=, lt_field=, le_field=}
+---@return boolean
+local function check_header_fields(binary_data, checks)
+    if not checks then return true end
+    local data_len = string.len(binary_data)
+    
+    local offsets = checks._offsets or {}
+    
+    local function read_u16(name)
+        local off = offsets[name]
+        if not off then return nil end
+        if off + 2 > data_len then return nil end
+        local lo = string.byte(binary_data, off + 1) or 0
+        local hi = string.byte(binary_data, off + 2) or 0
+        return lo + hi * 256
+    end
+    
+    for name, chk in pairs(checks) do
+        if name == '_offsets' then
+            -- skip metadata
+        else
+            local val = read_u16(name)
+            if val == nil then return false end
+            
+            if chk.min and val < chk.min then return false end
+            if chk.max and val > chk.max then return false end
+            
+            if chk.lt then
+                local other = read_u16(chk.lt)
+                if other == nil or val >= other then return false end
+            end
+            
+            if chk.le then
+                local other = read_u16(chk.le)
+                if other == nil or val > other then return false end
+            end
+            
+            if chk.lt_field then
+                local other = read_u16(chk.lt_field)
+                if other == nil or val >= other then return false end
+            end
+            
+            if chk.le_field then
+                local other = read_u16(chk.le_field)
+                if other == nil or val > other then return false end
+            end
+        end
+    end
+    
+    return true
+end
 function detector.enrich_file_meta(hobeta_file)
     if not hobeta_file or not hobeta_file.meta then return end
 
@@ -257,6 +361,20 @@ function detector.enrich_file_meta(hobeta_file)
                 end
             end
             if matched_sig_offset == nil then
+                is_match = false
+            end
+        end
+
+        -- Delta validation for load-address based formats
+        if is_match and rule.delta_check then
+            if not check_delta_valid(binary_data, rule.header_check) then
+                is_match = false
+            end
+        end
+
+        -- Header field validation
+        if is_match and rule.header_check then
+            if not check_header_fields(binary_data, rule.header_check) then
                 is_match = false
             end
         end
