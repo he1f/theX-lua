@@ -299,9 +299,77 @@ local function check_header_fields(binary_data, checks)
         end
     end
     
+    -- Optional: 0xFF-terminated order list (ProTracker 1/2 compiled modules).
+    -- Rejects random binaries that only satisfy loose Tempo/Length ranges.
+    local function check_positions_list(spec)
+        if type(spec) ~= "table" then return false end
+        local off = spec.offset
+        if off == nil or off >= data_len then return false end
+        local end_marker = spec.end_marker or 0xFF
+        local max_value = spec.max_value or 31
+        local min_count = spec.min_count or 1
+        local max_count = spec.max_count or 255
+        local count = 0
+        local max_pat = -1
+        local found_end = false
+        local used_pats = {}
+        for i = 0, max_count do
+            local idx = off + i + 1
+            if idx > data_len then return false end
+            local b = string.byte(binary_data, idx) or 0
+            if b == end_marker then
+                found_end = true
+                break
+            end
+            if b > max_value then return false end
+            count = count + 1
+            used_pats[b] = true
+            if b > max_pat then max_pat = b end
+        end
+        if not found_end or count < min_count or count > max_count then
+            return false
+        end
+        -- Optional: Length field must equal order size (PT1/PT2 compiled).
+        if spec.count_field then
+            local len_val = read_field(spec.count_field)
+            if len_val == nil or len_val ~= count then return false end
+        end
+        -- Optional: Loop must be within order (0 .. count-1).
+        if spec.loop_field then
+            local loop_val = read_field(spec.loop_field)
+            if loop_val == nil or loop_val >= count then return false end
+        end
+        -- Pattern table: only slots referenced by the order need valid pointers.
+        if spec.pattern_table then
+            local pt = spec.pattern_table
+            local pat_off = read_field(pt.offset_field or "PatternsOffset")
+            if pat_off == nil then return false end
+            local entry_size = pt.entry_size or 6
+            -- Table must start at/after end of positions (off + count + 1 for 0xFF).
+            local positions_end = off + count + 1
+            if pat_off < positions_end then return false end
+            if max_pat < 0 then return false end
+            local table_end = pat_off + (max_pat + 1) * entry_size
+            if table_end > data_len then return false end
+            for p = 0, max_pat do
+                if used_pats[p] then
+                    local base = pat_off + p * entry_size
+                    if base + entry_size > data_len then return false end
+                    for ch = 0, 2 do
+                        local lo = string.byte(binary_data, base + ch * 2 + 1) or 0
+                        local hi = string.byte(binary_data, base + ch * 2 + 2) or 0
+                        local ptr = lo + hi * 256
+                        if ptr == 0 or ptr >= data_len then return false end
+                    end
+                end
+            end
+        end
+        return true
+    end
+
     for name, chk in pairs(checks) do
-        if name == '_offsets' then
-            -- skip metadata
+        if name == '_offsets' or name == 'positions_list' then
+            -- handled separately
         else
             local val = read_field(name)
             if val == nil then return false end
@@ -328,6 +396,12 @@ local function check_header_fields(binary_data, checks)
                 local other = read_field(chk.le_field)
                 if other == nil or val > other then return false end
             end
+        end
+    end
+
+    if checks.positions_list then
+        if not check_positions_list(checks.positions_list) then
+            return false
         end
     end
     

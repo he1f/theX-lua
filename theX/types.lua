@@ -847,6 +847,8 @@ local rules = {
     type = "P",
   },
   {
+    -- Compiled ProTracker 1.x (no player). Header layout differs from PT2:
+    -- 16 samples + 16 ornaments, PatternsOffset@67, Name@69, Positions@99.
     description = "ProTracker 1.x module",
     group = "trackers",
     new_type = "m",
@@ -859,9 +861,20 @@ local rules = {
         PatternsOffset = { offset = 67 },
       },
       Tempo = { min = 2, max = 15 },
-      Length = { min = 1, max = 255 },
-      Loop = { min = 0, max = 99 },
-      PatternsOffset = { min = 100, max = 0x3600 },
+      PatternsOffset = { max = 0x3600 },
+      positions_list = {
+        offset = 99,
+        end_marker = 0xFF,
+        max_value = 31,
+        min_count = 1,
+        max_count = 255,
+        count_field = "Length",
+        loop_field = "Loop",
+        pattern_table = {
+          offset_field = "PatternsOffset",
+          entry_size = 6,
+        },
+      },
     },
     comment = {
       offset = 69,
@@ -869,6 +882,8 @@ local rules = {
     }
   },
   {
+    -- Compiled ProTracker 2.x (no player). 32 samples + 16 ornaments,
+    -- PatternsOffset@99, Name@101, Positions@131.
     description = "ProTracker 2.x module",
     group = "trackers",
     new_type = "m",
@@ -881,9 +896,20 @@ local rules = {
         PatternsOffset = { offset = 99 },
       },
       Tempo = { min = 2, max = 15 },
-      Length = { min = 1, max = 255 },
-      Loop = { min = 0, max = 99 },
-      PatternsOffset = { min = 132, max = 0x3600 },
+      PatternsOffset = { max = 0x3600 },
+      positions_list = {
+        offset = 131,
+        end_marker = 0xFF,
+        max_value = 31,
+        min_count = 1,
+        max_count = 255,
+        count_field = "Length",
+        loop_field = "Loop",
+        pattern_table = {
+          offset_field = "PatternsOffset",
+          entry_size = 6,
+        },
+      },
     },
     comment = {
       offset = 101,
