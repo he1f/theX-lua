@@ -20,6 +20,7 @@ local asm_decoders_registry = {
     "psc",
     "gt",
     "sqt",
+    "pt2",
     "asc",
 }
 

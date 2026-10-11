@@ -274,42 +274,58 @@ local function check_header_fields(binary_data, checks)
     
     local offsets = checks._offsets or {}
     
-    local function read_u16(name)
-        local off = offsets[name]
+    local function read_field(name)
+        local field = offsets[name]
+        if not field then return nil end
+        -- Support both formats:
+        --   Old: FieldName = 0 (number, default size=2)
+        --   New: FieldName = { offset = 0, size = 1 }
+        local off, size
+        if type(field) == "table" then
+            off = field.offset
+            size = field.size or 2
+        else
+            off = field
+            size = 2
+        end
         if not off then return nil end
-        if off + 2 > data_len then return nil end
-        local lo = string.byte(binary_data, off + 1) or 0
-        local hi = string.byte(binary_data, off + 2) or 0
-        return lo + hi * 256
+        if off + size > data_len then return nil end
+        if size == 1 then
+            return string.byte(binary_data, off + 1) or 0
+        else
+            local lo = string.byte(binary_data, off + 1) or 0
+            local hi = string.byte(binary_data, off + 2) or 0
+            return lo + hi * 256
+        end
     end
     
     for name, chk in pairs(checks) do
         if name == '_offsets' then
             -- skip metadata
         else
-            local val = read_u16(name)
+            local val = read_field(name)
             if val == nil then return false end
             
             if chk.min and val < chk.min then return false end
             if chk.max and val > chk.max then return false end
             
             if chk.lt then
-                local other = read_u16(chk.lt)
+                local other = read_field(chk.lt)
                 if other == nil or val >= other then return false end
             end
             
             if chk.le then
-                local other = read_u16(chk.le)
+                local other = read_field(chk.le)
                 if other == nil or val > other then return false end
             end
             
             if chk.lt_field then
-                local other = read_u16(chk.lt_field)
+                local other = read_field(chk.lt_field)
                 if other == nil or val >= other then return false end
             end
             
             if chk.le_field then
-                local other = read_u16(chk.le_field)
+                local other = read_field(chk.le_field)
                 if other == nil or val > other then return false end
             end
         end

@@ -847,6 +847,28 @@ local rules = {
     type = "P",
   },
   {
+    description = "ProTracker 2.x module",
+    group = "trackers",
+    new_type = "m",
+    special_char = "!",
+    header_check = {
+      _offsets = {
+        Tempo = { offset = 0, size = 1 },
+        Length = { offset = 1, size = 1 },
+        Loop = { offset = 2, size = 1 },
+        PatternsOffset = { offset = 99 },
+      },
+      Tempo = { min = 2, max = 15 },
+      Length = { min = 1, max = 255 },
+      Loop = { min = 0, max = 99 },
+      PatternsOffset = { min = 132, max = 0x3600 },
+    },
+    comment = {
+      offset = 101,
+      length = 30,
+    }
+  },
+  {
     description = "ProTracker 2.0 module",
     comment = {
       length = 30,
