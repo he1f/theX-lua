@@ -1,28 +1,28 @@
 local pipeline = {}
 
--- [[ Single global authority registry for all text decoders ]]
+-- [[ Single global authority registry: module path relative to theX.xLook ]]
 local decoders_registry = {
-    "alasm",
-    "xas",
-    "zxasm",
-    "masm",
-    "masm3",
-    "storm",
-    "tasm",
-    "tasm2",
+    "asm.alasm",
+    "asm.xas",
+    "asm.zxasm",
+    "asm.masm",
+    "asm.masm3",
+    "asm.storm",
+    "asm.tasm",
+    "asm.tasm2",
     "basic",
     "ac_edit",
-    "pt3",
-    "st1",
-    "stc",
-    "stp",
-    "ft",
-    "psc",
-    "gt",
-    "sqt",
-    "pt2",
-    "pt1",
-    "asc",
+    "trackers.pt3",
+    "trackers.st1",
+    "trackers.stc",
+    "trackers.stp",
+    "trackers.ft",
+    "trackers.psc",
+    "trackers.gt",
+    "trackers.sqt",
+    "trackers.pt2",
+    "trackers.pt1",
+    "trackers.asc",
 }
 
 --- Universal decoupled pipeline executing search, detection and translation for Z80 text sources.
@@ -37,16 +37,16 @@ function pipeline.decode_text_stream(hobeta_bytes, m)
     local h_start = tonumber(m.start) or 0
     local h_len = tonumber(m.size) or 0
 
-    -- Loop through unified authority table registry
-    for _, decoder_name in ipairs(decoders_registry) do
-        local success, decoder_class = pcall(require, "theX.xLook." .. decoder_name)
+    for _, decoder_path in ipairs(decoders_registry) do
+        local success, decoder_class = pcall(require, "theX.xLook." .. decoder_path)
         if success and decoder_class and decoder_class.new then
             local decoder_instance = decoder_class.new(hobeta_bytes, h_type, h_start, h_len)
             local detected, detected_name = decoder_instance:detect(h_type, h_start)
             if detected then
                 local text = decoder_instance:get_text()
                 if text then
-                    return text, detected_name or decoder_name
+                    local short_name = decoder_path:match("([^.]+)$") or decoder_path
+                    return text, detected_name or short_name
                 end
             end
         end
