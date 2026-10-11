@@ -21,6 +21,7 @@ local asm_decoders_registry = {
     "gt",
     "sqt",
     "pt2",
+    "pt1",
     "asc",
 }
 
