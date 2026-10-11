@@ -45,9 +45,9 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
 
     -- [[ STAGE 2: RUN INTERACTIVE COMPILER TEXT DECODING PIPELINES ]]
     local text_payload = nil
-    local assembler_label = nil
+    local decoder_label = nil
     if m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "trackers" or m.show_header == false then
-        text_payload, assembler_label = pipeline.decode_text_stream(raw_data, m)
+        text_payload, decoder_label = pipeline.decode_text_stream(raw_data, m)
     end
 
     -- [[ STAGE 3: DYNAMICALLY RESOLVE TEMPORARY DISK PATH & EXTENSION SUBSITUTIONS ]]
@@ -69,7 +69,7 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
             local target_ext = m.ext or m.new_type or m.type or "C"
             target_filename = base_file_name .. "." .. string.lower(target_ext)
             if m.description then
-                assembler_label = m.description
+                decoder_label = m.description
             end
         end
 
@@ -111,8 +111,8 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     end
 
     custom_title = string.format("[%s]", custom_title)
-    if assembler_label then
-        custom_title = custom_title .. "[" .. assembler_label .. "]"
+    if decoder_label then
+        custom_title = custom_title .. "[" .. decoder_label .. "]"
     end
 
     -- [[ STAGE 6: DISPLAY NON-MODAL CONTAINER ENGINES WINDOWS FRAMES ]]

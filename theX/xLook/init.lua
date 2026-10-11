@@ -2,7 +2,7 @@ xlook_plugin = {}
 
 local hobeta_reader = require("theX.formats.hobeta.reader")
 local detector = require("theX.utils.detector")
-local asm_pipeline = require("theX.xLook.decoder_pipeline")
+local decode_pipeline = require("theX.xLook.decoder_pipeline")
 local L = require("theX.ui.localization")
 
 local F = far.Flags
@@ -59,10 +59,10 @@ function xlook_plugin.process_and_edit_file(file_path)
 
     if is_to_be_decoded then
         -- Execute clean DRY call passing pure body string bytes (sectors payload without any headers)
-        local decoded_txt, asm_name = asm_pipeline.decode_text_stream(raw_data, m)
+        local decoded_txt, decoder_name = decode_pipeline.decode_text_stream(raw_data, m)
         if decoded_txt then
             text_payload = decoded_txt
-            type_label = asm_name or type_label
+            type_label = decoder_name or type_label
         end
     end
 

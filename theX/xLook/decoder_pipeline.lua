@@ -1,7 +1,7 @@
 local pipeline = {}
 
--- [[ Single global authority registry for all assembler text decoders ]]
-local asm_decoders_registry = {
+-- [[ Single global authority registry for all text decoders ]]
+local decoders_registry = {
     "alasm",
     "xas",
     "zxasm",
@@ -38,15 +38,15 @@ function pipeline.decode_text_stream(hobeta_bytes, m)
     local h_len = tonumber(m.size) or 0
 
     -- Loop through unified authority table registry
-    for _, decoder_name in ipairs(asm_decoders_registry) do
+    for _, decoder_name in ipairs(decoders_registry) do
         local success, decoder_class = pcall(require, "theX.xLook." .. decoder_name)
         if success and decoder_class and decoder_class.new then
             local decoder_instance = decoder_class.new(hobeta_bytes, h_type, h_start, h_len)
-            local detected, assembler_name = decoder_instance:detect(h_type, h_start)
+            local detected, detected_name = decoder_instance:detect(h_type, h_start)
             if detected then
                 local text = decoder_instance:get_text()
                 if text then
-                    return text, assembler_name or decoder_name
+                    return text, detected_name or decoder_name
                 end
             end
         end
