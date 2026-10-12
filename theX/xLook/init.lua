@@ -43,21 +43,30 @@ function xlook_plugin.process_and_edit_file(file_path)
 
     -- Evaluate bounds: item must belong to the asm group OR have show_header = false explicitly mapped
     local is_to_be_decoded = (m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "trackers")
+    local is_gfx = (m.group == "gfx")
     local is_raw_stream = (m.show_header == false)
 
-    if not (is_to_be_decoded or is_raw_stream) then
+    if not (is_to_be_decoded or is_gfx or is_raw_stream) then
         far.Message(L.xl_err_not_supported, L.xl_err_title, L.m_btn_cancel, "w")
         return false
     end
 
     -- [[ STAGE 4: CONVERTING VIA DECODER PIPELINES ]]
     local text_payload = nil
+    local image_payload = nil
     local type_label = nil
     if m.description then
         type_label = m.description
     end
 
-    if is_to_be_decoded then
+    if is_gfx then
+        local gif_bytes, decoder_name, img_ext = decode_pipeline.decode_image_stream(raw_data, m)
+        if gif_bytes then
+            image_payload = gif_bytes
+            type_label = decoder_name or type_label
+            m._xlook_img_ext = img_ext or ".gif"
+        end
+    elseif is_to_be_decoded then
         -- Execute clean DRY call passing pure body string bytes (sectors payload without any headers)
         local decoded_txt, decoder_name = decode_pipeline.decode_text_stream(raw_data, m)
         if decoded_txt then
@@ -67,17 +76,19 @@ function xlook_plugin.process_and_edit_file(file_path)
     end
 
     -- Slicing tail residues if working with raw undecoded text fallback buffers
-    if not text_payload and true_size > 0 and true_size < string.len(raw_data) then
+    if not text_payload and not image_payload and true_size > 0 and true_size < string.len(raw_data) then
         raw_data = string.sub(raw_data, 1, true_size)
     end
 
-    -- [[ STAGE 5: DUMP TEMPORARY FILE AND LAUNCH THE EDITOR ]]
+    -- [[ STAGE 5: DUMP TEMPORARY FILE AND LAUNCH THE EDITOR/VIEWER ]]
     local temp_dir = win.GetEnv("TEMP") or "."
     local base_name = file_path:match("([^\\/]+)$") or "xlook_temp"
     base_name = base_name:match("^(.-)%.[^%.]+$") or base_name
 
     local target_ext = ""
-    if m.group == "asm" then
+    if image_payload then
+        target_ext = m._xlook_img_ext or ".gif"
+    elseif m.group == "asm" then
         target_ext = ".a80"
     elseif m.group == "basic" then
         target_ext = ".bas"
@@ -92,7 +103,7 @@ function xlook_plugin.process_and_edit_file(file_path)
 
     local out_fh = io.open(full_dest_path, "wb")
     if not out_fh then return false end
-    out_fh:write(text_payload or raw_data)
+    out_fh:write(image_payload or text_payload or raw_data)
     out_fh:close()
 
     -- [[ STAGE 6: COMPILE FULL TR-DOS FILENAME TITLE FRAME LAYOUT ]]
@@ -118,7 +129,12 @@ function xlook_plugin.process_and_edit_file(file_path)
         custom_title = string.format("[%s]", custom_title)
     end
 
-    editor.Editor(full_dest_path, custom_title, nil, nil, nil, nil, F.EF_NONMODAL + F.EF_DELETEONCLOSE)
+    if image_payload then
+        -- GIF/image: open via Far viewer (or associated handler for .gif)
+        viewer.Viewer(full_dest_path, custom_title, nil, nil, nil, nil, F.VF_NONMODAL + F.VF_DELETEONCLOSE)
+    else
+        editor.Editor(full_dest_path, custom_title, nil, nil, nil, nil, F.EF_NONMODAL + F.EF_DELETEONCLOSE)
+    end
     return true
 end
 

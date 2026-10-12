@@ -46,7 +46,11 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     -- [[ STAGE 2: RUN INTERACTIVE COMPILER TEXT DECODING PIPELINES ]]
     local text_payload = nil
     local decoder_label = nil
-    if m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "trackers" or m.show_header == false then
+    local image_payload = nil
+    local image_ext = nil
+    if m.group == "gfx" then
+        image_payload, decoder_label, image_ext = pipeline.decode_image_stream(raw_data, m)
+    elseif m.group == "asm" or m.group == "basic" or m.group == "ac_edit" or m.group == "trackers" or m.show_header == false then
         text_payload, decoder_label = pipeline.decode_text_stream(raw_data, m)
     end
 
@@ -57,14 +61,19 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     -- If a decoder returned a clean string text buffer, override extension to ensure syntax highlights triggers
     if is_quickview then
         target_filename = m.display_name
+        if image_payload then
+            -- Quick view still wants a real .gif on disk for external/image handlers
+            target_filename = base_file_name .. (image_ext or ".gif")
+        end
     else
-        if m.group == "asm" then
+        if image_payload then
+            target_filename = base_file_name .. (image_ext or ".gif")
+        elseif m.group == "asm" then
             target_filename = base_file_name .. ".a80"
         elseif m.group == "basic" then
             target_filename = base_file_name .. ".bas"
         elseif m.group == "trackers" then
             target_filename = base_file_name .. ".txt"
-
         else
             local target_ext = m.ext or m.new_type or m.type or "C"
             target_filename = base_file_name .. "." .. string.lower(target_ext)
@@ -72,7 +81,6 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
                 decoder_label = m.description
             end
         end
-
     end
 
     local full_dest_path = win.JoinPath(dest_path, target_filename)
@@ -81,7 +89,9 @@ function gui_operations.process_view_edit(object, item, dest_path, is_view, is_e
     local file_handle = io.open(full_dest_path, "wb")
     if not file_handle then return false end
 
-    if text_payload then
+    if image_payload then
+        file_handle:write(image_payload)
+    elseif text_payload then
         file_handle:write(text_payload)
     else
         if m.show_header == false then

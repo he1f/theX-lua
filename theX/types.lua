@@ -140,6 +140,7 @@ local rules = {
   },
   {
     description = "Color screen",
+    group = "gfx",
     new_type = "s",
     no_secs = 27,
     size = 6912,
@@ -147,6 +148,7 @@ local rules = {
   },
   {
     description = "B/W screen",
+    group = "gfx",
     new_type = "s",
     no_secs = 24,
     size = 6144,

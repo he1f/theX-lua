@@ -25,6 +25,12 @@ local decoders_registry = {
     "trackers.asc",
 }
 
+-- Graphics decoders: produce binary image payloads (e.g. GIF).
+local gfx_registry = {
+    "gfx.color_screen",
+    "gfx.bw_screen",
+}
+
 --- Universal decoupled pipeline executing search, detection and translation for Z80 text sources.
 ---@param hobeta_bytes string Monolithic 17-byte header + data sectors stream buffer
 ---@param m table Target file metadata block tracking parameters
@@ -52,6 +58,41 @@ function pipeline.decode_text_stream(hobeta_bytes, m)
         end
     end
     return nil, nil
+end
+
+--- Graphics pipeline: detect screen-like payloads and emit image file bytes.
+---@param hobeta_bytes string Body bytes (no hobeta header)
+---@param m table File metadata (type/start/size/group)
+---@return string|nil image_bytes Encoded image file contents
+---@return string|nil type_name Human label (e.g. "Color Screen")
+---@return string|nil ext Extension including dot (e.g. ".gif")
+function pipeline.decode_image_stream(hobeta_bytes, m)
+    if not hobeta_bytes or not m then
+        return nil, nil, nil
+    end
+
+    local h_type = m.type or "C"
+    local h_start = tonumber(m.start) or 0
+    local h_len = tonumber(m.size) or 0
+
+    for _, decoder_path in ipairs(gfx_registry) do
+        local success, decoder_class = pcall(require, "theX.xLook." .. decoder_path)
+        if success and decoder_class and decoder_class.new then
+            local decoder_instance = decoder_class.new(hobeta_bytes, h_type, h_start, h_len)
+            local detected, detected_name = decoder_instance:detect()
+            if detected and decoder_instance.get_gif then
+                local gif_bytes = decoder_instance:get_gif()
+                if gif_bytes and #gif_bytes > 0 then
+                    local ext = ".gif"
+                    if decoder_instance.output_ext then
+                        ext = decoder_instance:output_ext() or ext
+                    end
+                    return gif_bytes, detected_name or "gfx", ext
+                end
+            end
+        end
+    end
+    return nil, nil, nil
 end
 
 return pipeline
