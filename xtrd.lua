@@ -1435,7 +1435,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     panel.RedrawPanel(nil, 0)
 
     if is_move and not conflict_state.abort then
-        M.DeleteFiles(object, handle, items_to_move, op_flags | F.OPM_SILENT)
+        M.DeleteFiles(object, handle, items_to_move, bit64.bor(op_flags, F.OPM_SILENT))
     end
 
     return 1

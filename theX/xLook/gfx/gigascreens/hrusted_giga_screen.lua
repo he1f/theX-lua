@@ -58,7 +58,7 @@ function HrustedGigaScreen:detect()
   -- data_size at base+2 (bytes 2,3 of HR header) — Python: data_size at 0x105 relative body = HR+2
   local data_lo = string.byte(body, base + 2 + 1) or 0
   local data_hi = string.byte(body, base + 3 + 1) or 0
-  local data_size = data_lo | (data_hi << 8)
+  local data_size = bit64.bor(data_lo, bit64.lshift(data_hi, 8))
   if data_size ~= GIGA_SIZE then
     return false, nil
   end

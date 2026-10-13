@@ -148,7 +148,7 @@ function gif_writer.encode(frames, width, height, palette_rgb, delay_cs, opts)
   parts[#parts + 1] = u16le(width)
   parts[#parts + 1] = u16le(height)
   -- GCT flag | color res 7 | GCT size bits-1
-  parts[#parts + 1] = string.char(0x80 | 0x70 | (bits - 1))
+  parts[#parts + 1] = string.char(bit64.bor(0x80, 0x70, bits - 1))
   parts[#parts + 1] = string.char(0) -- background
   parts[#parts + 1] = string.char(0) -- aspect
 
@@ -222,7 +222,7 @@ function gif_writer.quantize_rgb_frames(rgb_frames, width, height, max_colors)
   local color_order = {}
 
   local function key_of(r, g, b)
-    return (r << 16) | (g << 8) | b
+    return bit64.bor(bit64.lshift(r, 16), bit64.lshift(g, 8), b)
   end
 
   for _, rgb in ipairs(rgb_frames) do
