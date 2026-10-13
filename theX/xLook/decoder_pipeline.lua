@@ -27,8 +27,16 @@ local decoders_registry = {
 
 -- Graphics decoders: produce binary image payloads (e.g. GIF).
 local gfx_registry = {
-    "gfx.color_screen",
-    "gfx.bw_screen",
+    "gfx.screens.lc52",
+    "gfx.screens.lc40",
+    "gfx.screens.screen_crasher",
+    "gfx.gigascreens.hrusted_giga_screen",
+    "gfx.gigascreens.giga_screen",
+    "gfx.rgb.rgb_888",
+    "gfx.rgb.rgb_1in1",
+    "gfx.rgb.rgb_2in1",
+    "gfx.screens.color_screen",
+    "gfx.screens.bw_screen",
 }
 
 --- Universal decoupled pipeline executing search, detection and translation for Z80 text sources.
@@ -78,7 +86,7 @@ function pipeline.decode_image_stream(hobeta_bytes, m)
     for _, decoder_path in ipairs(gfx_registry) do
         local success, decoder_class = pcall(require, "theX.xLook." .. decoder_path)
         if success and decoder_class and decoder_class.new then
-            local decoder_instance = decoder_class.new(hobeta_bytes, h_type, h_start, h_len)
+            local decoder_instance = decoder_class.new(hobeta_bytes, h_type, h_start, h_len, m)
             local detected, detected_name = decoder_instance:detect()
             if detected and decoder_instance.get_gif then
                 local gif_bytes = decoder_instance:get_gif()

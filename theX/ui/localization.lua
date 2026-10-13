@@ -7,6 +7,7 @@ local component_modules = {
     "theX.dialog.lang",
     "theX.formats.trd.lang",
     "theX.formats.raw.lang",   -- RAW format specific strings
+    "theX.formats.hobeta.lang",
 }
 
 --- Private helper to dynamically accumulate flat keys into a target runtime table.

@@ -139,6 +139,26 @@ local rules = {
     type = "T",
   },
   {
+    description = "GigaScreen",
+    group = "gfx",
+    new_type = "s",
+    no_secs = 54,
+    size = 13824,
+    special_char = "!",
+  },
+  {
+    description = "Hrusted GigaScreen",
+    group = "gfx",
+    new_type = "s",
+    signatures = {
+      {
+        offset = 0x103,
+        pattern = "HR",
+      },
+    },
+    special_char = "!",
+  },
+  {
     description = "Color screen",
     group = "gfx",
     new_type = "s",
@@ -155,10 +175,43 @@ local rules = {
     special_char = "!",
   },
   {
+    description = "RGB packed screen (.888)",
+    group = "gfx",
+    new_type = "s",
+    -- type '8', start bytes are ASCII "88" -> 0x38 + 0x38*256
+    start = 0x3838,
+    type = "8",
+    special_char = "!",
+  },
+  {
     description = "RGB packed screen",
     new_type = "s",
     start = 47104,
     type = "Y",
+  },
+  {
+    description = "8col pix/byte RGB",
+    group = "gfx",
+    new_type = "s",
+    no_secs = 64,
+    size = 0x4000,
+    special_char = "!",
+  },
+  {
+    description = "8col pix/byte RGB 96 lines",
+    group = "gfx",
+    new_type = "s",
+    no_secs = 48,
+    size = 0x3000,
+    special_char = "!",
+  },
+  {
+    description = "8col 2pix/byte RGB",
+    group = "gfx",
+    new_type = "s",
+    no_secs = 96,
+    size = 24576,
+    special_char = "!",
   },
   {
     description = "x2 packed screen",
@@ -168,6 +221,7 @@ local rules = {
   },
   {
     description = "Laser Compact 5.2 screen",
+    group = "gfx",
     new_type = "s",
     signatures = {
       {
@@ -178,6 +232,7 @@ local rules = {
   },
   {
     description = "Laser Compact 5.2 screen with depacker",
+    group = "gfx",
     new_type = "s",
     signatures = {
       {
@@ -211,12 +266,14 @@ local rules = {
   },
   {
     description = "Laser Compact 4 screen",
+    group = "gfx",
     new_type = "s",
     start = 40004,
     type = "P",
   },
   {
     description = "Laser Compact 4 screen with depacker",
+    group = "gfx",
     new_type = "s",
     signatures = {
       {
@@ -274,6 +331,7 @@ local rules = {
   },
   {
     description = "Screen Crasher packed screen",
+    group = "gfx",
     new_type = "s",
     start = 40000,
     type = "$",
