@@ -669,7 +669,7 @@ function M.GetFindData(object, handle, key_flags)
     if not object then return nil end
 
     -- [[ STAGE 1: LIVE RELOAD CACHE TRANSACTION IF NOT IN BACKGROUND SEARCH ]]
-    if (key_flags & F.OPM_FIND) == 0 then
+    if bit64.band(key_flags, F.OPM_FIND) == 0 then
         for i = #object.files_list, 1, -1 do
             object.files_list[i] = nil
         end
@@ -999,7 +999,7 @@ function M.DeleteFiles(object, handle, panel_items, op_mode)
     if not object or not panel_items or #panel_items == 0 then return false end
 
     -- [[ STAGE 1: USER CONFIRMATION DIALOG INTERCEPT ]]
-    if (op_mode & F.OPM_SILENT) == 0 then
+    if bit64.band(op_mode, F.OPM_SILENT) == 0 then
         local msg_buttons = L.m_btn_ok .. ";" .. L.m_btn_cancel
         local choice = far.Message(L.trd_dlg_delete_confirm, L.trd_dlg_delete_title, msg_buttons, "w")
         if choice ~= 1 then return false end
@@ -1147,7 +1147,7 @@ function M.ClosePanel(object, handle)
 
         -- Check the flags using the correct PFLAGS_REVERSESORTORDER constant
         if info.Flags and F.PFLAGS_REVERSESORTORDER then
-            plugin_settings.last_sort_order = (info.Flags & F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
+            plugin_settings.last_sort_order = bit64.band(info.Flags, F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
         else
             plugin_settings.last_sort_order = 0
         end
@@ -1168,9 +1168,9 @@ end
 ---@return integer result Execution status integer code (1 for success, 0 for user abort, -1 for collapse failure)
 function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
 -- [[ M.GetFiles -> STAGE 1: CAPTURE INTERNAL OPERATIONS (F3 VIEW / F4 EDIT OVERRIDES) ]]
-    local is_quickview = (op_flags & F.OPM_QUICKVIEW) ~= 0
-    local is_view = (op_flags & F.OPM_VIEW) ~= 0 and not is_quickview
-    local is_edit = (op_flags & F.OPM_EDIT) ~= 0
+    local is_quickview = bit64.band(op_flags, F.OPM_QUICKVIEW) ~= 0
+    local is_view = bit64.band(op_flags, F.OPM_VIEW) ~= 0 and not is_quickview
+    local is_edit = bit64.band(op_flags, F.OPM_EDIT) ~= 0
 
     if is_view or is_edit or is_quickview then
         local current_item = items_to_move[1]
@@ -1224,7 +1224,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     local final_dest_path, export_as_scl, skip_headers
 
     -- Detect if target passive panel is an active virtual plugin layer frame
-    local is_passive_plugin = passive_info and (passive_info.Flags & F.PFLAGS_PLUGIN) ~= 0
+    local is_passive_plugin = passive_info and bit64.band(passive_info.Flags, F.PFLAGS_PLUGIN) ~= 0
 
     if is_passive_plugin then
         -- Enforce strict flat extraction bypass when copying directly inside plugins viewports
@@ -1424,7 +1424,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     for i = 1, panel_info.ItemsNumber do
         local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
         if item and item.Flags then
-            local is_selected = (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
+            local is_selected = bit64.band(ffi.cast("uint64_t", item.Flags), F.PPIF_SELECTED) ~= 0
             if is_selected and processed_root_elements[item.FileName] then
                 panel.SetSelection(handle, F.PANEL_ACTIVE, i, false)
             end
@@ -1611,7 +1611,7 @@ function M.ProcessPanelInput(object, handle, record)
             end
             local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
             if current_item and current_item.FileName then
-                local is_selected = (ffi.cast("uint64_t", current_item.Flags) & F.PPIF_SELECTED) ~= 0
+                local is_selected = bit64.band(ffi.cast("uint64_t", current_item.Flags), F.PPIF_SELECTED) ~= 0
                 local existing_idx = nil
                 for idx, name in ipairs(object.selection_order) do
                     if name == current_item.FileName then existing_idx = idx; break end
@@ -1632,7 +1632,7 @@ function M.ProcessPanelInput(object, handle, record)
         -- survive the round-trip. Custom keys we stash on far_items in GetFindData (e.g.
         -- _is_dir_sys, _dir_sys_id, _trdos_index) do NOT come back here, so we must resolve
         -- the target the same way M.GetFiles/M.DeleteFiles already do: by name + attributes.
-        local is_shift = (ctrl_state & F.SHIFT_PRESSED ~= 0)
+        local is_shift = bit64.band(ctrl_state, F.SHIFT_PRESSED) ~= 0
         if v_key == 0x75 and is_shift then
             local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
 
@@ -1689,7 +1689,7 @@ end
 ---@return string default_dir Absolute host OS directory path string to pre-fill the creation dialog
 local function resolve_active_panel_directory()
     local panel_info = panel.GetPanelInfo(nil, F.PANEL_ACTIVE)
-    if panel_info and (panel_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
+    if panel_info and bit64.band(panel_info.Flags, F.PFLAGS_PLUGIN) ~= 0 then
         local host_file = panel.GetPanelHostFile(nil, F.PANEL_ACTIVE)
         if host_file and host_file ~= "" then
             local dir = string.match(host_file, "^(.*)[\\/][^\\/]+$")

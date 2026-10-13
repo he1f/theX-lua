@@ -12,10 +12,10 @@ local N = W * H
 ---@param ci integer 0..15
 ---@return integer 0=Z black, 1=N normal, 2=B bright
 local function brightness_group(ci)
-  if (ci & 0x07) == 0 then
+  if bit64.band(ci, 0x07) == 0 then
     return 0
   end
-  if (ci & 0x08) ~= 0 then
+  if bit64.band(ci, 0x08) ~= 0 then
     return 2
   end
   return 1
@@ -72,9 +72,9 @@ end
 ---@param ci integer
 ---@return integer rbit, integer gbit, integer bbit
 local function ci_bits(ci)
-  local r = ((ci & 0x02) ~= 0) and 1 or 0
-  local g = ((ci & 0x04) ~= 0) and 1 or 0
-  local b = ((ci & 0x01) ~= 0) and 1 or 0
+  local r = (bit64.band(ci, 0x02) ~= 0) and 1 or 0
+  local g = (bit64.band(ci, 0x04) ~= 0) and 1 or 0
+  local b = (bit64.band(ci, 0x01) ~= 0) and 1 or 0
   return r, g, b
 end
 

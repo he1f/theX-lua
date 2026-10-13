@@ -171,7 +171,8 @@ function gif_writer.encode(frames, width, height, palette_rgb, delay_cs, opts)
     min_code_size = 2
   end
 
-  local gce_flags = (disposal << 2) & 0x1C
+  local gce_flags = bit64.lshift(disposal, 2)
+  gce_flags = bit64.band(0x1C)
 
   for _, frame in ipairs(frames) do
     if #frames > 1 then
@@ -248,9 +249,9 @@ function gif_writer.quantize_rgb_frames(rgb_frames, width, height, max_colors)
 
   if #color_order <= max_colors then
     for i, k in ipairs(color_order) do
-      local r = (k >> 16) & 0xFF
-      local g = (k >> 8) & 0xFF
-      local b = k & 0xFF
+      local r = bit64.band(bit64.rshift(k, 16), 0xFF)
+      local g = bit64.band(bit64.rshift(k, 8), 0xFF)
+      local b = bit64.band(k, 0xFF)
       palette[i] = { r, g, b }
       map[k] = i - 1
     end
@@ -265,10 +266,14 @@ function gif_writer.quantize_rgb_frames(rgb_frames, width, height, max_colors)
       if #palette >= max_colors then
         break
       end
-      local r = (k >> 16) & 0xFF
-      local g = (k >> 8) & 0xFF
-      local b = k & 0xFF
-      local bucket = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)
+      local r = bit64.band(bit64.rshift(k, 16), 0xFF)
+      local g = bit64.band(bit64.rshift(k, 8), 0xFF)
+      local b = bit64.band(k, 0xFF)
+      local bucket = bit64.bor(
+        bit64.lshift(bit64.rshift(r, 3), 10),
+        bit64.lshift(bit64.rshift(g, 3), 5),
+        bit64.rshift(b, 3)
+      )
       if not used_bucket[bucket] then
         used_bucket[bucket] = true
         palette[#palette + 1] = { r, g, b }
@@ -281,9 +286,9 @@ function gif_writer.quantize_rgb_frames(rgb_frames, width, height, max_colors)
         break
       end
       if map[k] == nil then
-        local r = (k >> 16) & 0xFF
-        local g = (k >> 8) & 0xFF
-        local b = k & 0xFF
+        local r = bit64.band(bit64.rshift(k, 16), 0xFF)
+        local g = bit64.band(bit64.rshift(k, 8), 0xFF)
+        local b = bit64.band(k, 0xFF)
         palette[#palette + 1] = { r, g, b }
         map[k] = #palette - 1
       end

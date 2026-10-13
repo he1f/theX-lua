@@ -63,7 +63,7 @@ local function get_panel_dir(panel_type_flag)
     if not p_info then return "" end
 
     -- If this is a plugin panel, take its host file path and strip the filename
-    if (p_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
+    if (bit64.band(p_info.Flags, F.PFLAGS_PLUGIN)) ~= 0 then
         local host_file = panel.GetPanelHostFile(nil, panel_type_flag)
         if host_file and host_file ~= "" then
             -- Strip the filename via string.match, keeping only the directory path
@@ -266,9 +266,9 @@ local function get_c0_width(handle)
 end
 
 function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
-    local is_quickview = (op_flags & F.OPM_QUICKVIEW) ~= 0
-    local is_view = (op_flags & F.OPM_VIEW) ~= 0 and not is_quickview
-    local is_edit = (op_flags & F.OPM_EDIT) ~= 0
+    local is_quickview = bit64.band(op_flags, F.OPM_QUICKVIEW) ~= 0
+    local is_view = bit64.band(op_flags, F.OPM_VIEW) ~= 0 and not is_quickview
+    local is_edit = bit64.band(op_flags, F.OPM_EDIT) ~= 0
 
     local is_internal_op = is_view or is_edit or is_quickview
 
@@ -324,7 +324,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
     local final_dest_path, export_as_scl, skip_headers
 
     -- CHECK: If the passive panel is a PLUGIN, copy WITHOUT dialogs
-    if passive_info and (passive_info.Flags & F.PFLAGS_PLUGIN) ~= 0 then
+    if passive_info and bit64.band(passive_info.Flags, F.PFLAGS_PLUGIN) ~= 0 then
         final_dest_path = default_dest
         export_as_scl = false
         skip_headers = false
@@ -351,7 +351,7 @@ function M.GetFiles(object, handle, items_to_move, is_move, dest_path, op_flags)
         for i = 1, panel_info.ItemsNumber do
             local item = panel.GetPanelItem(handle, F.PANEL_ACTIVE, i)
             if item and item.Flags then
-                local is_selected = (ffi.cast("uint64_t", item.Flags) & F.PPIF_SELECTED) ~= 0
+                local is_selected = bit64.band(ffi.cast("uint64_t", item.Flags), F.PPIF_SELECTED) ~= 0
                 if is_selected and processed_map[item.FileName] then
                     panel.SetSelection(handle, F.PANEL_ACTIVE, i, false)
                 end
@@ -418,7 +418,7 @@ end
 ---@param key_flags integer System panel flags passed by Far
 ---@return table|nil far_items A sequential array of plugin panel file items
 function M.GetFindData(object, handle, key_flags)
-    if (key_flags & F.OPM_FIND) == 0 then
+    if bit64.band(key_flags, F.OPM_FIND) == 0 then
         for i = #object.files_list, 1, -1 do
             object.files_list[i] = nil
         end
@@ -718,7 +718,7 @@ function M.ClosePanel(object, handle)
 
         -- Check the flags using the correct PFLAGS_REVERSESORTORDER constant
         if info.Flags and F.PFLAGS_REVERSESORTORDER then
-            plugin_settings.last_sort_order = (info.Flags & F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
+            plugin_settings.last_sort_order = bit64.band(info.Flags, F.PFLAGS_REVERSESORTORDER) == 0 and 0 or 1
         else
             plugin_settings.last_sort_order = 0
         end
@@ -744,7 +744,7 @@ function M.ProcessPanelInput(object, handle, record)
             end
             local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
             if current_item and current_item.FileName then
-                local is_selected = (ffi.cast("uint64_t", current_item.Flags) & F.PPIF_SELECTED) ~= 0
+                local is_selected = bit64.band(ffi.cast("uint64_t", current_item.Flags), F.PPIF_SELECTED) ~= 0
                 local existing_idx = nil
                 for idx, name in ipairs(object.selection_order) do
                     if name == current_item.FileName then existing_idx = idx; break end
@@ -760,7 +760,7 @@ function M.ProcessPanelInput(object, handle, record)
 
         -- [[ HOOK 2: INTERCEPT INTERACTIVE RENAME (Shift + F6) ]]
         -- F6 key code is 0x75. Verify that Shift state bitmask modifier is active
-        local is_shift = (ctrl_state & F.SHIFT_PRESSED ~= 0)
+        local is_shift = bit64.band(ctrl_state, F.SHIFT_PRESSED) ~= 0
         if v_key == 0x75 and is_shift then
             local current_item = panel.GetCurrentPanelItem(handle, F.PANEL_ACTIVE)
             if current_item and current_item.FileName then

@@ -63,15 +63,15 @@ end
 ---@param attribute_offset integer
 ---@return integer
 local function get_real_address(virtual_address, attribute_boundary, attribute_offset)
-  virtual_address = virtual_address & 0xFFFF
+  virtual_address = bit64.band(virtual_address, 0xFFFF)
   if virtual_address < attribute_boundary then
-    local y_in_char = (virtual_address & 0x0007) << 8
-    local char_y = (virtual_address & 0x0038) << 2
-    local char_x = (virtual_address & 0x07C0) >> 6
-    local segment = (virtual_address & 0x1800)
-    return segment | y_in_char | char_y | char_x
+    local y_in_char = bit64.lshift(bit64.band(virtual_address, 0x0007), 8)
+    local char_y = bit64.lshift(bit64.band(virtual_address, 0x0038), 2)
+    local char_x = bit64.rshift(bit64.band(virtual_address, 0x07C0), 6)
+    local segment = bit64.band(virtual_address, 0x1800)
+    return bit64.bor(segment, y_in_char, char_y, char_x)
   end
-  return (virtual_address + attribute_offset) & 0xFFFF
+  return bit64.band(virtual_address + attribute_offset, 0xFFFF)
 end
 
 --- Bitstream over packed LC52 payload.
@@ -115,7 +115,7 @@ local function stream_get_bit(stream)
     stream.byte = stream_get_byte(stream)
   end
   local bit = 0
-  if (stream.byte & BIT_MASK[stream.bit_index + 1]) ~= 0 then
+  if bit64.band(stream.byte, BIT_MASK[stream.bit_index + 1]) ~= 0 then
     bit = 1
   end
   stream.bit_index = (stream.bit_index + 1) % 8
@@ -128,11 +128,11 @@ local function stream_get_code(stream)
   local code = 0xFE
   for _ = 1, 3 do
     if stream_get_bit(stream) == 1 then
-      return (code + 1) & 0xFF
+      return bit64.band(code + 1, 0xFF)
     end
-    code = (2 * code + stream_get_bit(stream)) & 0xFF
+    code = bit64.band(2 * code + stream_get_bit(stream), 0xFF)
   end
-  return ((2 * code + stream_get_bit(stream)) + 9) & 0xFF
+  return bit64.band((2 * code + stream_get_bit(stream)) + 9, 0xFF)
 end
 
 ---@param stream table
@@ -195,18 +195,18 @@ local function unpack_lc52(source, header_length)
     stream = new_stream(source, 0x9a, stream_len)
   end
 
-  local to = (attribute_offset & 0x0300) << 3
-  local attribute_boundary = (attribute_offset ~ 0x1800) & 0xFC00
+  local to = bit64.lshift(bit64.band(attribute_offset, 0x0300), 3)
+  local attribute_boundary = bit64.band(bit64.bxor(attribute_offset, 0x1800), 0xFC00)
 
   local function put_at(virt, value)
     local addr = get_real_address(virt, attribute_boundary, attribute_offset)
     if addr < SCR_SIZE then
-      dest[addr + 1] = value & 0xFF
+      dest[addr + 1] = bit64.band(value, 0xFF)
     end
   end
 
   put_at(to, stream_get_byte(stream))
-  to = (to + 1) & 0xFFFF
+  to = bit64.band(to + 1, 0xFFFF)
 
   local guard = 0
   local guard_max = (#source + SCR_SIZE) * 64
@@ -219,7 +219,7 @@ local function unpack_lc52(source, header_length)
 
     if stream_get_bit(stream) == 1 then
       put_at(to, stream_get_byte(stream))
-      to = (to + 1) & 0xFFFF
+      to = bit64.band(to + 1, 0xFFFF)
     else
       local length = stream_get_len(stream)
 
@@ -227,19 +227,19 @@ local function unpack_lc52(source, header_length)
         break
       end
 
-      local distance = stream_get_code(stream) << 8
+      local distance = bit64.lshift(stream_get_code(stream), 8)
       local direction = stream_get_bit(stream)
-      distance = distance | stream_get_byte(stream)
+      distance = bit64.bor(distance, stream_get_byte(stream))
 
       -- unsigned 8/16 wrap like C: len = -len; dist = -dist
-      length = (-length) & 0xFF
-      distance = (-distance) & 0xFFFF
+      length = bit64.band(-length, 0xFF)
+      distance = bit64.band(-distance, 0xFFFF)
 
       if distance > 768 then
-        length = (length + 1) & 0xFF
+        length = bit64.band(length + 1, 0xFF)
       end
 
-      local copy_from = (to - distance) & 0xFFFF
+      local copy_from = bit64.band(to - distance, 0xFFFF)
       local step = (direction ~= 0) and -1 or 1
 
       while length > 0 do
@@ -248,8 +248,8 @@ local function unpack_lc52(source, header_length)
         if dest_to < SCR_SIZE and dest_from < SCR_SIZE then
           dest[dest_to + 1] = dest[dest_from + 1]
         end
-        to = (to + 1) & 0xFFFF
-        copy_from = (copy_from + step) & 0xFFFF
+        to = bit64.band(to + 1, 0xFFFF)
+        copy_from = bit64.band(copy_from + step, 0xFFFF)
         length = length - 1
       end
     end

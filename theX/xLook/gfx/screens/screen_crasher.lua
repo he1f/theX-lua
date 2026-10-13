@@ -72,11 +72,11 @@ local function decrash(source, packed_size)
       return nil
     end
 
-    local command = b & 0xC0
+    local command = bit64.band(b, 0xC0)
 
     if command == 0x80 then
       -- copy literals
-      local length = b & 0x3F
+      local length = bit64.band(b, 0x3F)
       if to_pos > SCR_SIZE - length then
         return nil
       end
@@ -91,7 +91,7 @@ local function decrash(source, packed_size)
 
     elseif command == 0xC0 then
       -- RLE
-      local length = (b & 0x3F) + 3
+      local length = bit64.band(b, 0x3F) + 3
       if to_pos > SCR_SIZE - length then
         return nil
       end
@@ -107,11 +107,11 @@ local function decrash(source, packed_size)
 
     else
       -- LZ backreference
-      local length = ((b & 0xF8) >> 3) + 3
+      local length = bit64.rshift(bit64.band(b, 0xF8), 3) + 3
       if from_pos >= #source then
         return nil
       end
-      local offset = (256 * (b & 0x07)) + string.byte(source, from_pos + 1)
+      local offset = (256 * bit64.band(b, 0x07)) + string.byte(source, from_pos + 1)
       from_pos = from_pos + 1
 
       if to_pos > SCR_SIZE - length then
@@ -145,16 +145,16 @@ local function decrash(source, packed_size)
 
   -- Columnar pixels → Speccy layout
   for segment = 0, 2 do
-    local segment_dest = segment << 11
+    local segment_dest = bit64.lshift(segment, 11)
     local segment_src = 2048 * segment
 
     for x = 0, 31 do
       local src_base = segment_src + 64 * x
 
       for y = 0, 63 do
-        local line = (y % 8) << 8
-        local row = (math.floor(y / 8) % 8) << 5
-        local d_off = segment_dest | line | row | x
+        local line = bit64.lshift(y % 8, 8)
+        local row = bit64.lshift(math.floor(y / 8) % 8, 5)
+        local d_off = bit64.bor(segment_dest, line, row, x)
         dest[d_off + 1] = buf[src_base + y + 1]
       end
     end
@@ -162,7 +162,7 @@ local function decrash(source, packed_size)
 
   local parts = {}
   for i = 1, SCR_SIZE do
-    parts[i] = string.char(dest[i] & 0xFF)
+    parts[i] = string.char(bit64.band(dest[i], 0xFF))
   end
   return table.concat(parts)
 end

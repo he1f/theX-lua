@@ -51,17 +51,17 @@ end
 ---@param attribute_offset integer
 ---@return integer
 local function get_real_address(virtual_address, attribute_boundary, attribute_offset)
-  virtual_address = virtual_address & 0xFFFF
+  virtual_address = bit64.band(virtual_address, 0xFFFF)
 
   if virtual_address < attribute_boundary then
-    local y_in_char = (virtual_address & 0x0007) << 8
-    local char_y = (virtual_address & 0x0038) << 2
-    local char_x = (virtual_address & 0x07C0) >> 6
-    local segment = (virtual_address & 0x1800)
-    return segment | y_in_char | char_y | char_x
+    local y_in_char = bit64.lshift(bit64.band(virtual_address, 0x0007), 8)
+    local char_y = bit64.lshift(bit64.band(virtual_address, 0x0038), 2)
+    local char_x = bit64.rshift(bit64.band(virtual_address, 0x07C0), 6)
+    local segment = bit64.band(virtual_address, 0x1800)
+    return bit64.bor(segment, y_in_char, char_y, char_x)
   end
 
-  return (virtual_address + attribute_offset) & 0xFFFF
+  return bit64.band(virtual_address + attribute_offset, 0xFFFF)
 end
 
 --- Unpack Laser Compact 4.0 into a 6912-byte SCR buffer (string).
@@ -90,11 +90,11 @@ local function unpack_lc40(source)
   end
 
   -- attribute_offset = source[p] << 8  (Python 0-based)
-  local attribute_offset = string.byte(source, p + 1) << 8
+  local attribute_offset = bit64.lshift(string.byte(source, p + 1), 8)
   p = p + 1
 
-  local to = (attribute_offset & 0x0300) << 3
-  local attribute_boundary = (attribute_offset ~ 0x1800) & 0xFC00
+  local to = bit64.lshift(bit64.band(attribute_offset, 0x0300), 3)
+  local attribute_boundary = bit64.band(bit64.bxor(attribute_offset, 0x1800), 0xFC00)
 
   local src_len = #source
   local guard = 0
@@ -113,9 +113,9 @@ local function unpack_lc40(source)
       break
     end
 
-    if (flags & 0xC1) == 0xC1 then
+    if bit64.band(flags, 0xC1) == 0xC1 then
       -- RLE
-      local length = (flags & 0x3C) >> 2
+      local length = bit64.rshift(bit64.band(flags, 0x3C), 2)
 
       if length == 0 then
         if p >= src_len then
@@ -123,12 +123,12 @@ local function unpack_lc40(source)
         end
         length = string.byte(source, p + 1)
         p = p + 1
-      elseif (flags & 0x02) == 0x00 then
+      elseif bit64.band(flags, 0x02) == 0x00 then
         length = length + 1
       end
 
       local what = 0
-      if (flags & 0x02) == 0x00 then
+      if bit64.band(flags, 0x02) == 0x00 then
         if p >= src_len then
           break
         end
@@ -141,13 +141,13 @@ local function unpack_lc40(source)
         if addr < SCR_SIZE then
           dest[addr + 1] = what
         end
-        to = (to + 1) & 0xFFFF
+        to = bit64.band(to + 1, 0xFFFF)
         length = length - 1
       end
 
-    elseif (flags & 0xC1) == 0xC0 then
+    elseif bit64.band(flags, 0xC1) == 0xC0 then
       -- literal copy
-      local length = (flags & 0x3E) >> 1
+      local length = bit64.rshift(bit64.band(flags, 0x3E), 1)
 
       while length > 0 do
         if p >= src_len then
@@ -159,14 +159,14 @@ local function unpack_lc40(source)
         if addr < SCR_SIZE then
           dest[addr + 1] = b
         end
-        to = (to + 1) & 0xFFFF
+        to = bit64.band(to + 1, 0xFFFF)
         length = length - 1
       end
 
     else
       -- backreference
-      local length = (flags & 0x78) >> 3
-      local high = (flags & 0x07) | 0xF8
+      local length = bit64.rshift(bit64.band(flags, 0x78), 3)
+      local high = bit64.bor(bit64.band(flags, 0x07), 0xF8)
 
       if length == 0 then
         if p >= src_len then
@@ -174,11 +174,8 @@ local function unpack_lc40(source)
         end
         local b = string.byte(source, p + 1)
         p = p + 1
-        high = (high << 1) | (b & 0x01)
-        -- keep high as signed-ish 8-bit then extend: Python does high <<= 1; high |= ...
-        -- high may exceed 8 bits; for offset we use (high << 8) + next
-        -- Match Python: high starts as (flags&7)|0xF8 which is 0xF8..0xFF, then <<1 | bit → still fits in 9 bits
-        length = b >> 1
+        high = bit64.bor(bit64.lshift(high, 1), bit64.band(b, 0x01))
+        length = bit64.rshift(b, 1)
       end
 
       length = length + 1
@@ -186,13 +183,12 @@ local function unpack_lc40(source)
       if p >= src_len then
         break
       end
-      local offset = (high << 8) + string.byte(source, p + 1)
+      local offset = bit64.lshift(high, 8) + string.byte(source, p + 1)
       p = p + 1
 
-      -- WORD wrap: offset is effectively signed via high bits 0xF8..
-      offset = offset & 0xFFFF
-      local copy_from = (to + offset) & 0xFFFF
-      local direction = ((flags & 0x80) ~= 0) and -1 or 1
+      offset = bit64.band(offset, 0xFFFF)
+      local copy_from = bit64.band(to + offset, 0xFFFF)
+      local direction = (bit64.band(flags, 0x80) ~= 0) and -1 or 1
 
       while length > 0 do
         local addr_to = get_real_address(to, attribute_boundary, attribute_offset)
@@ -202,8 +198,8 @@ local function unpack_lc40(source)
           dest[addr_to + 1] = dest[addr_from + 1]
         end
 
-        to = (to + 1) & 0xFFFF
-        copy_from = (copy_from + direction) & 0xFFFF
+        to = bit64.band(to + 1, 0xFFFF)
+        copy_from = bit64.band(copy_from + direction, 0xFFFF)
         length = length - 1
       end
     end
