@@ -167,7 +167,7 @@ function gui_operations.sync_selection_order(object, handle)
         if item and item.FileName and item.FileName ~= ".." then
             -- Verify if the item is explicitly flagged with native selected attributes masks
             -- PPIF_SELECTED bit constant maps to 0x0001 value boundaries properties
-            local is_marked = (item.Flags & 0x0001) ~= 0 or item.Selected == true
+            local is_marked = bit64.band(item.Flags, 0x0001) ~= 0 or item.Selected == true
 
             if is_marked then
                 active_selection_set[item.FileName] = true
