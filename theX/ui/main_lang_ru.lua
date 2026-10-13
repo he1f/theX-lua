@@ -10,6 +10,8 @@ return {
     m_menu_create_scl            = "Создать SCL архив...",
     m_open_dialog_title          = "Открыть SCL архив",
     xl_menu_title                = "xLook",
+    dlg_xlook_settings_title     = "Настройки xLook",
+    dlg_xlook_palette_lbl        = "&Палитра:",
     m_open_dialog_lbl            = "Выберите путь к SCL файлу:",
     m_btn_create                 = "Создать",
     m_btn_cancel                 = "Отмена",

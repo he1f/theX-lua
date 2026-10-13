@@ -1,24 +1,41 @@
 local palette = {}
 
---- Default Pulsar-like palette (matches Python theXimg defaults).
----@return table
-function palette.default()
-  return {
-    name = "pulsar",
-    base_levels = { 0x00, 0xCD, 0xFF },
-    matrix = {
-      { 0xFF, 0x00, 0x00 },
-      { 0x00, 0xFF, 0x00 },
-      { 0x00, 0x00, 0xFF },
-    },
-  }
+local palettes = require("theX.palettes")
+local settings_manager = require("theX.utils.settings_manager")
+local xlook_settings = settings_manager.new("xlook")
+
+--- Active palette name for gfx decoders (override via palette.set_name).
+palette.name = string.lower(tostring(
+  xlook_settings.get("palette_name", palettes.DEFAULT_NAME) or palettes.DEFAULT_NAME
+))
+
+--- Set current palette by name (looked up in theX.palettes).
+---@param name string|nil
+---@return nil
+function palette.set_name(name)
+  if name and name ~= "" then
+    palette.name = string.lower(tostring(name))
+  else
+    palette.name = palettes.DEFAULT_NAME
+  end
 end
 
---- Build 16 ZX RGB triples from palette table.
----@param parsed table|nil
+--- Resolved ParsedPalette table for the current name.
+---@return table
+function palette.default()
+  return palettes.get(palette.name)
+end
+
+--- Build 16 ZX RGB triples from palette table or current name.
+---@param parsed table|string|nil full table, name string, or nil for palette.name
 ---@return table palette16 list of {r,g,b} at indices 1..16 (ci 0..15)
 function palette.build_zx_palette16(parsed)
-  parsed = parsed or palette.default()
+  if type(parsed) == "string" then
+    parsed = palettes.get(parsed)
+  elseif not parsed then
+    parsed = palettes.get(palette.name)
+  end
+
   local zz = parsed.base_levels[1] or 0
   local nn = parsed.base_levels[2] or 0xCD
   local bb = parsed.base_levels[3] or 0xFF

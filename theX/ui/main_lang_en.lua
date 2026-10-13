@@ -10,6 +10,8 @@ return {
     m_menu_create_scl            = "Create SCL archive...",
     m_open_dialog_title          = "Open SCL archive",
     xl_menu_title                = "xLook",
+    dlg_xlook_settings_title     = "xLook Options",
+    dlg_xlook_palette_lbl        = "&Palette:",
     m_open_dialog_lbl            = "Select SCL file path:",
     m_btn_create                 = "Create",
     m_btn_cancel                 = "Cancel",

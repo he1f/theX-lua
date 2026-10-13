@@ -310,4 +310,52 @@ function manager.show_create_trd_dialog(default_path, default_filename, dirsys_a
 end
 
 
+--- Displays xLook settings: single dropdown to pick ZX display palette.
+---@param current_palette string|nil Active palette name (e.g. "pulsar")
+---@return string|nil new_palette Selected palette name, or nil if cancelled
+function manager.show_xlook_settings_dialog(current_palette)
+    local palettes = require("theX.palettes")
+    local names = palettes.list_names()
+    local current = string.lower(tostring(current_palette or palettes.DEFAULT_NAME))
+    if not palettes.by_name[current] then
+        current = palettes.DEFAULT_NAME
+    end
+
+    local list_items = {}
+    for _, name in ipairs(names) do
+        table.insert(list_items, { Text = name })
+    end
+
+    local ID_PALETTE = 3
+    local ID_OK = 5
+    local ID_CANCEL = 6
+
+    local dialog_items = {
+        { F.DI_DOUBLEBOX, 3, 1, 52, 7, 0, "", "", 0, L.dlg_xlook_settings_title },
+        { F.DI_TEXT,      5, 2,  0, 2, 0, "", "", 0, L.dlg_xlook_palette_lbl },
+        { F.DI_COMBOBOX,  5, 3, 50, 3, list_items, "", "",
+          F.DIF_DROPDOWNLIST + F.DIF_LISTNOAMPERSAND + F.DIF_FOCUS, current },
+        { F.DI_TEXT,      5, 5,  0, 5, 0, "", "", F.DIF_SEPARATOR, "" },
+        { F.DI_BUTTON,    0, 6,  0, 6, 0, "", "", F.DIF_CENTERGROUP + F.DIF_DEFAULTBUTTON, L.m_btn_save },
+        { F.DI_BUTTON,    0, 6,  0, 6, 0, "", "", F.DIF_CENTERGROUP, L.m_btn_cancel },
+    }
+
+    local dialog_id = win.Uuid("D4E5F6A7-B8C9-4D0E-1F2A-3B4C5D6E7F8A")
+    local dlg_result = far.Dialog(dialog_id, -1, -1, 56, 9, nil, dialog_items)
+
+    if dlg_result == -1 or dlg_result == ID_CANCEL then
+        return nil
+    end
+    if dlg_result ~= ID_OK then
+        return nil
+    end
+
+    local selected = string.match(dialog_items[ID_PALETTE][10] or "", "^%s*(.-)%s*$") or ""
+    selected = string.lower(selected)
+    if selected == "" or not palettes.by_name[selected] then
+        return nil
+    end
+    return selected
+end
+
 return manager

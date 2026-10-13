@@ -8,9 +8,23 @@ package.path = script_dir .. "?\\init.lua;" .. script_dir .. "?.lua;" .. package
 local M = {}
 local F = far.Flags
 
-
 local L = require("theX.ui.localization")
 local xlook_core = require("theX.xLook.init")
+local dialog_manager = require("theX.dialog.manager")
+local settings_manager = require("theX.utils.settings_manager")
+local gfx_palette = require("theX.xLook.gfx.palette")
+local palettes = require("theX.palettes")
+
+local plugin_settings = settings_manager.new("xlook")
+
+--- Apply saved palette name to gfx render path.
+---@return nil
+local function apply_saved_palette()
+    local name = plugin_settings.get("palette_name", palettes.DEFAULT_NAME)
+    gfx_palette.set_name(name)
+end
+
+apply_saved_palette()
 
 ---@param open_from integer
 ---@param guid any
@@ -43,6 +57,24 @@ MenuItem {
                 xlook_core.process_and_edit_file(full_path)
                 return nil
             end
+        end
+        return nil
+    end
+}
+
+MenuItem {
+    -- Options -> Plugins configuration
+    menu   = "Config",
+    area   = "Shell",
+    guid   = "A1B2C3D4-E5F6-4789-ABCD-EF0123456789",
+    text   = L.xl_menu_title,
+    action = function()
+        plugin_settings.load_settings()
+        local current = plugin_settings.get("palette_name", palettes.DEFAULT_NAME)
+        local updated = dialog_manager.show_xlook_settings_dialog(current)
+        if updated ~= nil then
+            plugin_settings.set("palette_name", updated)
+            gfx_palette.set_name(updated)
         end
         return nil
     end
