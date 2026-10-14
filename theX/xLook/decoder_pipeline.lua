@@ -35,6 +35,8 @@ local gfx_registry = {
     "gfx.rgb.rgb_888",
     "gfx.rgb.rgb_1in1",
     "gfx.rgb.rgb_2in1",
+    "gfx.chunks.chunk_screen",
+    "gfx.chunks.packed_chunk_screen",
     "gfx.sprites.sprite_generator_v5",
     "gfx.sprites.sprite_editor_21",
     "gfx.sprites.sprite_editor_11",

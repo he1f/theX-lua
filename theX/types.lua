@@ -320,6 +320,37 @@ local rules = {
     type = "s",
     special_char = "!",
   },
+  -- Chunk screens before Sprite Maker: start 9288/9320 also satisfy size%8wh==0.
+  {
+    description = "Chunk screen pix/byte",
+    group = "gfx",
+    new_type = "s",
+    size = 3072,
+    special_char = "!",
+  },
+  {
+    description = "HardCore 4x4 chunk screen",
+    group = "gfx",
+    new_type = "s",
+    start = 9288,
+    type = "C",
+    special_char = "!",
+  },
+  {
+    description = "Chunk screen 2pix/byte",
+    group = "gfx",
+    new_type = "s",
+    size = 1536,
+    special_char = "!",
+  },
+  {
+    description = "HardCore 4x4 chunk screen (packed)",
+    group = "gfx",
+    new_type = "s",
+    start = 9320,
+    type = "C",
+    special_char = "!",
+  },
   {
     -- start low byte = dim (w|h<<4); size % (8*w*h) == 0 via rule.meta.
     -- Sample sm_1_6x.$C: start=0x2C44 → 4x4, size=1408.
@@ -410,16 +441,6 @@ local rules = {
   {
     description = "HardCore 4x4 chunk set (output)",
     start = 9064,
-    type = "C",
-  },
-  {
-    description = "HardCore 4x4 chunk screen",
-    start = 9288,
-    type = "C",
-  },
-  {
-    description = "HardCore 4x4 chunk screen (packed)",
-    start = 9320,
     type = "C",
   },
   {

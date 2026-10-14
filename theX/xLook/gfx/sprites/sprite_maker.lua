@@ -54,6 +54,12 @@ function SpriteMaker:detect()
     return false, nil
   end
 
+  -- HardCore chunk screens use start 9288/9320; size also divides 8*w*h.
+  local start = self.header_start
+  if start == 9288 or start == 9320 then
+    return false, nil
+  end
+
   local w, h = self:_dimensions()
   if w == 0 or h == 0 then
     return false, nil
