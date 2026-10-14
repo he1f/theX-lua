@@ -352,6 +352,48 @@ local rules = {
     special_char = "!",
   },
   {
+    description = "Standart (ROM) font",
+    group = "gfx",
+    new_type = "s",
+    size = 768,
+    special_char = "!",
+  },
+  {
+    description = "Font 224 chars",
+    group = "gfx",
+    new_type = "s",
+    size = 1792,
+    special_char = "!",
+  },
+  {
+    description = "Font 256 chars",
+    group = "gfx",
+    new_type = "s",
+    size = 2048,
+    special_char = "!",
+  },
+  {
+    description = "UDG font",
+    group = "gfx",
+    new_type = "s",
+    size = 152,
+    special_char = "!",
+  },
+  {
+    description = "256 characters 4x8 font (2 chars in one block)",
+    group = "gfx",
+    new_type = "s",
+    size = 1024,
+    special_char = "!",
+  },
+  {
+    description = "224 characters 6x7 font (packed)",
+    group = "gfx",
+    new_type = "s",
+    size = 1008,
+    special_char = "!",
+  },
+  {
     -- start low byte = dim (w|h<<4); size % (8*w*h) == 0 via rule.meta.
     -- Sample sm_1_6x.$C: start=0x2C44 → 4x4, size=1408.
     description = "Sprite Maker 1.6x sprites",
@@ -414,17 +456,6 @@ local rules = {
     start = 32765,
     type = "G",
     special_char = "!",
-  },
-  {
-    description = "Standart font 8x8",
-    no_secs = 3,
-    size = 768,
-    type = "C",
-  },
-  {
-    description = "256 chars font 4x8",
-    no_secs = 8,
-    size = 2048,
   },
   {
     description = "Screen Crasher packed screen",
