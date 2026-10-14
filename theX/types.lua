@@ -313,6 +313,62 @@ local rules = {
     type = "C",
   },
   {
+    description = "Sprites Generator 5.0 sprites",
+    group = "gfx",
+    new_type = "s",
+    start = 38138,
+    type = "s",
+    special_char = "!",
+  },
+  {
+    -- start low byte = dim (w|h<<4); size % (8*w*h) == 0 via rule.meta.
+    -- Sample sm_1_6x.$C: start=0x2C44 → 4x4, size=1408.
+    description = "Sprite Maker 1.6x sprites",
+    group = "gfx",
+    new_type = "s",
+    type = "C",
+    meta = {
+      size = {
+        multiple_of = {
+          8,
+          { from = "start", mask = 0x0F },
+          { from = "start", mask = 0x0F, shift = 4 },
+        },
+      },
+    },
+    special_char = "!",
+    reject_signatures = {
+      {
+        offset = 0,
+        pattern = "CHIPv",
+      },
+    },
+  },
+  {
+    description = "SPwRITE MAKER v4 sprites",
+    group = "gfx",
+    new_type = "s",
+    special_char = "!",
+    signatures = {
+      {
+        offset = 0,
+        pattern = "SPWR v4 FILE",
+      },
+    },
+  },
+  {
+    description = "ani-file v.5-",
+    group = "gfx",
+    new_type = "s",
+    special_char = "!",
+    signatures = {
+      {
+        offset = 0,
+        pattern = "GIF animation",
+      },
+    },
+  },
+  {
     description = "Sprite Editor 2.1 sprites",
     group = "gfx",
     new_type = "s",

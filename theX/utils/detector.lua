@@ -407,6 +407,163 @@ local function check_header_fields(binary_data, checks)
     
     return true
 end
+
+--- Resolve hobeta meta numeric field by name.
+---@param name string
+---@param size integer
+---@param start_addr integer
+---@param sectors integer
+---@return integer|nil
+local function meta_field_value(name, size, start_addr, sectors)
+    if name == "start" then
+        return start_addr
+    elseif name == "size" then
+        return size
+    elseif name == "sectors" or name == "no_secs" then
+        return sectors
+    end
+    return nil
+end
+
+--- Evaluate a constant or { from/field, mask?, shift?, min? } term.
+---@param term number|table
+---@param size integer
+---@param start_addr integer
+---@param sectors integer
+---@return integer|nil
+local function eval_meta_term(term, size, start_addr, sectors)
+    if type(term) == "number" then
+        return term
+    end
+    if type(term) ~= "table" then
+        return nil
+    end
+    local from = term.from or term.field
+    if not from then
+        return nil
+    end
+    local v = meta_field_value(from, size, start_addr, sectors)
+    if v == nil then
+        return nil
+    end
+    local shift = tonumber(term.shift) or 0
+    if shift > 0 then
+        v = bit64.rshift(v, shift)
+    end
+    if term.mask ~= nil then
+        v = bit64.band(v, term.mask)
+    end
+    local min_v = term.min
+    if min_v ~= nil and v < min_v then
+        return nil
+    end
+    return v
+end
+
+--- Product of multiple_of spec (number or list of terms).
+---@param spec number|table
+---@param size integer
+---@param start_addr integer
+---@param sectors integer
+---@return integer|nil product
+local function eval_multiple_of_product(spec, size, start_addr, sectors)
+    if type(spec) == "number" then
+        local n = tonumber(spec) or 0
+        if n < 1 then
+            return nil
+        end
+        return n
+    end
+    if type(spec) ~= "table" then
+        return nil
+    end
+    local product = 1
+    for _, term in ipairs(spec) do
+        local v = eval_meta_term(term, size, start_addr, sectors)
+        if v == nil then
+            return nil
+        end
+        -- field extracts default min=1 unless min explicitly set (nil means default)
+        if type(term) == "table" and term.min == nil and v < 1 then
+            return nil
+        end
+        if type(term) == "number" and v < 1 then
+            return nil
+        end
+        product = product * v
+        if product < 1 then
+            return nil
+        end
+    end
+    return product
+end
+
+--- Apply generic predicates to one meta field value.
+--- Supported keys: eq, ne, lt, le, gt, ge, min, max, multiple_of
+---@param value integer
+---@param constraints table
+---@param size integer
+---@param start_addr integer
+---@param sectors integer
+---@return boolean
+local function meta_field_constraints_ok(value, constraints, size, start_addr, sectors)
+    if constraints.eq ~= nil and value ~= constraints.eq then
+        return false
+    end
+    if constraints.ne ~= nil and value == constraints.ne then
+        return false
+    end
+    if constraints.lt ~= nil and not (value < constraints.lt) then
+        return false
+    end
+    if constraints.le ~= nil and not (value <= constraints.le) then
+        return false
+    end
+    if constraints.gt ~= nil and not (value > constraints.gt) then
+        return false
+    end
+    if constraints.ge ~= nil and not (value >= constraints.ge) then
+        return false
+    end
+    if constraints.min ~= nil and value < constraints.min then
+        return false
+    end
+    if constraints.max ~= nil and value > constraints.max then
+        return false
+    end
+    if constraints.multiple_of ~= nil then
+        local product = eval_multiple_of_product(constraints.multiple_of, size, start_addr, sectors)
+        if product == nil or value < product or (value % product) ~= 0 then
+            return false
+        end
+    end
+    return true
+end
+
+--- rule.meta = { start = { lt = ... }, size = { multiple_of = {...} }, sectors = {...} }
+---@param meta_spec table
+---@param size integer
+---@param start_addr integer
+---@param sectors integer
+---@return boolean
+local function meta_constraints_ok(meta_spec, size, start_addr, sectors)
+    if type(meta_spec) ~= "table" then
+        return false
+    end
+    for field_name, constraints in pairs(meta_spec) do
+        if type(constraints) == "table" then
+            local value = meta_field_value(field_name, size, start_addr, sectors)
+            if value == nil then
+                return false
+            end
+            if not meta_field_constraints_ok(value, constraints, size, start_addr, sectors) then
+                return false
+            end
+        end
+    end
+    return true
+end
+
 function detector.enrich_file_meta(hobeta_file)
     if not hobeta_file or not hobeta_file.meta then return end
 
@@ -440,6 +597,18 @@ function detector.enrich_file_meta(hobeta_file)
         if is_match and rule.start and tonumber(rule.start) ~= start_addr then is_match = false end
         if is_match and rule.start_lt and start_addr >= tonumber(rule.start_lt) then is_match = false end
 
+        -- Generic hobeta meta predicates (any of start/size/sectors):
+        -- meta = {
+        --   start = { eq|ne|lt|le|gt|ge|min|max = N },
+        --   size  = { multiple_of = N | { N, { from="start", mask, shift, min }, ... } },
+        --   sectors = { ... },
+        -- }
+        if is_match and rule.meta ~= nil then
+            if not meta_constraints_ok(rule.meta, size, start_addr, sectors) then
+                is_match = false
+            end
+        end
+
         -- Signature analysis of the binary body; remember matched 0-based offset
         local matched_sig_offset = nil
         if is_match and rule.signatures then
@@ -452,6 +621,17 @@ function detector.enrich_file_meta(hobeta_file)
             end
             if matched_sig_offset == nil then
                 is_match = false
+            end
+        end
+
+        -- Negative signatures: rule fails if any reject pattern matches
+        if is_match and rule.reject_signatures then
+            for _, sig in ipairs(rule.reject_signatures) do
+                local off = match_signature(binary_data, sig, rule)
+                if off ~= nil then
+                    is_match = false
+                    break
+                end
             end
         end
 

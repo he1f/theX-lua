@@ -172,18 +172,26 @@ function gif_writer.encode(frames, width, height, palette_rgb, delay_cs, opts)
   end
 
   local transparent_index = opts.transparent_index -- 0-based, or nil
-  local use_gce = (#frames > 1) or (transparent_index ~= nil)
+  local frame_delays = opts.frame_delays_cs -- optional per-frame delays (cs)
+  local use_gce = (#frames > 1) or (transparent_index ~= nil) or (frame_delays ~= nil)
   local gce_flags = bit64.band(bit64.lshift(disposal, 2), 0x1C)
   if transparent_index ~= nil then
     gce_flags = bit64.bor(gce_flags, 0x01)
   end
 
-  for _, frame in ipairs(frames) do
+  for fi, frame in ipairs(frames) do
     if use_gce then
+      local dcs = delay_cs
+      if frame_delays and frame_delays[fi] then
+        dcs = frame_delays[fi]
+        if dcs < 1 then
+          dcs = 1
+        end
+      end
       -- Graphic Control Extension
       parts[#parts + 1] = string.char(0x21, 0xF9, 0x04)
       parts[#parts + 1] = string.char(gce_flags)
-      parts[#parts + 1] = u16le(delay_cs)
+      parts[#parts + 1] = u16le(dcs)
       if transparent_index ~= nil then
         parts[#parts + 1] = string.char(bit64.band(transparent_index, 0xFF))
       else
