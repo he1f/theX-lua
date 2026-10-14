@@ -35,6 +35,8 @@ local gfx_registry = {
     "gfx.rgb.rgb_888",
     "gfx.rgb.rgb_1in1",
     "gfx.rgb.rgb_2in1",
+    "gfx.sprites.sprite_editor_21",
+    "gfx.sprites.sprite_editor_11",
     "gfx.screens.color_screen",
     "gfx.screens.bw_screen",
 }

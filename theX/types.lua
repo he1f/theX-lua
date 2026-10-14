@@ -313,10 +313,20 @@ local rules = {
     type = "C",
   },
   {
-    description = "Sprite Editor file",
+    description = "Sprite Editor 2.1 sprites",
+    group = "gfx",
     new_type = "s",
     start = 36861,
     type = "G",
+    special_char = "!",
+  },
+  {
+    description = "Sprite Editor 1.1 sprites",
+    group = "gfx",
+    new_type = "s",
+    start = 32765,
+    type = "G",
+    special_char = "!",
   },
   {
     description = "Standart font 8x8",
